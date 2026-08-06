@@ -206,8 +206,10 @@ export async function pickMedicine({ prefillCondition = null } = {}) {
       </div>
       <div class="search">
         <span class="search__icon">${icon("search", { size: 18 })}</span>
-        <input class="input" id="pm-q" type="search" autocomplete="off" placeholder="Search drugs">
+        <input class="input" id="pm-q" type="search" autocomplete="off"
+          autocapitalize="words" enterkeyhint="done" placeholder="Type any medicine name">
       </div>
+      <div id="pm-typed"></div>
       <div id="pm-active"></div>
       <div id="pm-results"></div>
     `,
@@ -215,6 +217,24 @@ export async function pickMedicine({ prefillCondition = null } = {}) {
       const input = root.querySelector("#pm-q");
       const results = root.querySelector("#pm-results");
       const activeBox = root.querySelector("#pm-active");
+      const typedBox = root.querySelector("#pm-typed");
+
+      /**
+       * Most scripts here are trade names the reference list has never heard of,
+       * so a typed name is an answer in its own right, not a failed search.
+       * It sits above the results and stays available even when there are hits.
+       */
+      const drawTyped = () => {
+        const typed = input.value.trim();
+        if (mode === "condition" || typed.length < 2 || formulary.hasExactName(drugs, typed)) {
+          return mount(typedBox, "");
+        }
+        mount(typedBox, html`
+          <button class="btn btn--primary btn--block" data-use-typed style="margin-bottom:12px">
+            ${icon("plus", { size: 18 })} Prescribe “${typed}”
+          </button>
+        `);
+      };
 
       const drawActive = () => {
         if (!activeCondition) return mount(activeBox, "");
@@ -228,32 +248,54 @@ export async function pickMedicine({ prefillCondition = null } = {}) {
         `);
       };
 
+      const drugRow = (d) => html`
+        <div class="drug-result" data-drug-name="${d.name}">
+          <div class="grow">
+            <div class="drug-result__name">
+              ${d.name}
+              ${d.custom ? html` <span class="badge badge--muted">yours</span>` : ""}
+              ${d.useCount > 1 ? html` <span class="badge badge--muted">×${d.useCount}</span>` : ""}
+            </div>
+            ${d.indications.length
+              ? html`<div class="drug-result__ind">${d.indications.join(" · ")}</div>` : ""}
+            ${(() => {
+              const last = d.lastUsed || {};
+              const strength = last.strength || d.default?.strength;
+              const frequency = last.frequency || d.default?.frequency;
+              return strength || frequency
+                ? html`<div class="drug-result__dose">
+                    ${[strength, frequency].filter(Boolean).join("  ")}
+                  </div>`
+                : "";
+            })()}
+          </div>
+          <span class="drug-result__add">${icon("plusCircle", { size: 22 })}</span>
+        </div>
+      `;
+
       const drawDrugs = () => {
         const rows = formulary.search(drugs, input.value, { conditionKey: activeCondition, limit: 60 });
         if (!rows.length) {
           mount(results, html`<p class="muted small" style="padding:16px 4px">
-            No medicine matches. You can add it to your own formulary from the Formulary tab.
+            Nothing in the formulary matches — use the button above to prescribe it by name.
           </p>`);
           return;
         }
-        mount(results, html`
-          ${rows.map((d) => html`
-            <div class="drug-result" data-drug="${d.id}">
-              <div class="grow">
-                <div class="drug-result__name">
-                  ${d.name}${d.custom ? html` <span class="badge badge--muted">yours</span>` : ""}
-                </div>
-                ${d.indications.length
-                  ? html`<div class="drug-result__ind">${d.indications.join(" · ")}</div>` : ""}
-                ${d.default?.strength || d.default?.frequency
-                  ? html`<div class="drug-result__dose">
-                      ${[d.default.strength, d.default.frequency].filter(Boolean).join("  ")}
-                    </div>` : ""}
+        // Medicines already prescribed lead; the reference list follows.
+        const used = rows.filter((d) => d.useCount > 0);
+        const rest = rows.filter((d) => !d.useCount);
+        const group = (label, list) =>
+          list.length
+            ? html`
+              <div class="section__head" style="margin-top:8px">
+                <span class="section__title">${label}</span>
               </div>
-              <span class="drug-result__add">${icon("plusCircle", { size: 22 })}</span>
-            </div>
-          `)}
-        `);
+              ${list.map(drugRow)}`
+            : "";
+
+        mount(results, used.length && rest.length
+          ? html`${group("You prescribe", used)}${group("Formulary", rest)}`
+          : html`${rows.map(drugRow)}`);
       };
 
       const drawConditions = () => {
@@ -272,7 +314,9 @@ export async function pickMedicine({ prefillCondition = null } = {}) {
       };
 
       const redraw = () => {
-        input.placeholder = mode === "drug" ? "Search drugs" : "Search conditions, e.g. hypertension";
+        input.placeholder =
+          mode === "drug" ? "Type any medicine name" : "Search conditions, e.g. hypertension";
+        drawTyped();
         drawActive();
         if (mode === "condition" && !activeCondition) drawConditions();
         else drawDrugs();
@@ -281,7 +325,22 @@ export async function pickMedicine({ prefillCondition = null } = {}) {
       redraw();
       input.addEventListener("input", debounce(redraw, 120));
 
+      // Enter takes whatever is typed, so a script can be written without
+      // lifting a thumb to tap a button.
+      input.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        const typed = input.value.trim();
+        if (mode === "condition" || typed.length < 2) return;
+        const exact = drugs.find((d) => d.name.toLowerCase() === typed.toLowerCase());
+        close(exact || formulary.freeTextDrug(typed));
+      });
+
       root.addEventListener("click", (event) => {
+        if (event.target.closest("[data-use-typed]")) {
+          close(formulary.freeTextDrug(input.value.trim()));
+          return;
+        }
         const modeBtn = event.target.closest("[data-mode]");
         if (modeBtn) {
           mode = modeBtn.dataset.mode;
@@ -306,8 +365,12 @@ export async function pickMedicine({ prefillCondition = null } = {}) {
           redraw();
           return;
         }
-        const drug = event.target.closest("[data-drug]");
-        if (drug) close(drugs.find((d) => d.id === drug.dataset.drug) || null);
+        // Matched by name, not id: a personal medicine has no reference id.
+        const drug = event.target.closest("[data-drug-name]");
+        if (drug) {
+          const wanted = drug.dataset.drugName.toLowerCase();
+          close(drugs.find((d) => d.name.toLowerCase() === wanted) || null);
+        }
       });
 
       setTimeout(() => input.focus(), 120);

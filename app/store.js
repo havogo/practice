@@ -134,6 +134,49 @@ export function newInvoice(seed = {}) {
   };
 }
 
+/**
+ * Remember a medicine the prescriber actually used.
+ *
+ * Most scripts here are written in South African trade names — Adco-Dol,
+ * Purbac, Brufen — which a BNF-style reference list does not contain. So the
+ * app keeps its own list of what has genuinely been prescribed, with the
+ * strength and frequency last used, and ranks that above the reference. After a
+ * few weeks of use the prescriber's own vocabulary is the formulary.
+ *
+ * Called when a prescription is saved, so nothing needs to be filed by hand.
+ */
+export async function recordMedicineUsage(items = []) {
+  const existing = await medicines.all();
+  const byName = new Map(existing.map((m) => [String(m.name || "").trim().toLowerCase(), m]));
+  const seen = new Set();
+  const stamp = now();
+
+  for (const item of items) {
+    const name = String(item.name || "").trim();
+    if (name.length < 2) continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue; // one bump per script, not per line
+    seen.add(key);
+
+    const prior = byName.get(key);
+    await medicines.save({
+      ...(prior || {}),
+      // Keep the spelling first recorded, so casing does not flip about.
+      name: prior?.name || name,
+      strength: item.strength || prior?.strength || "",
+      frequency: item.frequency || prior?.frequency || "",
+      dose: item.dose || prior?.dose || "",
+      form: item.form || prior?.form || "",
+      indications: prior?.indications || [],
+      // Links back to the reference entry when the drug came from there, so the
+      // indications and dosing guidance are not lost by shadowing it.
+      fromFormulary: item.drugId || prior?.fromFormulary || null,
+      useCount: (prior?.useCount || 0) + 1,
+      lastUsedAt: stamp,
+    });
+  }
+}
+
 export const CERTIFICATE_TYPES = {
   "sick-leave": "Medical certificate — sick leave",
   "fitness-to-work": "Certificate of fitness to work",

@@ -68,7 +68,12 @@ export async function view(ctx) {
             const { field, itemId } = el.dataset;
             if (itemId) {
               const item = draft.items.find((i) => i.id === itemId);
-              if (item) item[field] = el.value;
+              if (item) {
+                item[field] = el.value;
+                // Keep the line-as-it-will-print in step with the fields above it.
+                const preview = canvas.querySelector(`[data-preview="${itemId}"]`);
+                if (preview) preview.textContent = itemLine(item);
+              }
             } else {
               draft[field] = el.value;
             }
@@ -91,6 +96,9 @@ export async function view(ctx) {
         draft.id = saved.id;
         draft.rev = saved.rev;
         dirty = false;
+        // Learn the names and doses actually written, so the next script for the
+        // same thing is a couple of taps.
+        await store.recordMedicineUsage(draft.items);
         if (!silent) toast(status === "issued" ? "Prescription issued" : "Saved", "ok");
         return saved;
       }
@@ -327,10 +335,11 @@ function itemCard(item) {
     <div class="rx-item">
       <div class="rx-item__head">
         <div class="grow">
-          <div class="rx-item__name">${item.name}</div>
+          <input class="input" data-field="name" data-item-id="${item.id}" value="${item.name}"
+            aria-label="Medicine name" style="font-weight:600">
           ${item.reference
             ? html`<button class="rx-item__ref" data-act="show-reference" data-item-id="${item.id}"
-                style="background:none;border:0;padding:0;text-align:left;color:var(--brand-600);cursor:pointer">
+                style="background:none;border:0;padding:4px 0 0;text-align:left;color:var(--brand-600);cursor:pointer">
                 Formulary guidance
               </button>`
             : ""}
@@ -377,7 +386,7 @@ function itemCard(item) {
           value="${item.instructions || ""}" placeholder="Take with food">
       </label>
 
-      <p class="small muted" style="margin-top:10px">${itemLine(item)}</p>
+      <p class="small muted" style="margin-top:10px" data-preview="${item.id}">${itemLine(item)}</p>
     </div>
   `;
 }

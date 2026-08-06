@@ -207,7 +207,16 @@ async function boot() {
 
   router.start(navigate);
 
-  if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+  // ?nosw disables the offline cache for a session. While developing, a worker
+  // serving the previous copy of a module looks exactly like an edit that did
+  // not take, and costs more time to diagnose than it saves.
+  const noWorker = new URLSearchParams(location.search).has("nosw");
+  if (noWorker) {
+    const registrations = await navigator.serviceWorker?.getRegistrations?.() ?? [];
+    await Promise.all(registrations.map((r) => r.unregister()));
+    await Promise.all((await caches.keys()).map((k) => caches.delete(k)));
+    console.info("[sw] disabled for this session (?nosw)");
+  } else if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
     const swUrl = new URL("../sw.js", import.meta.url);
     navigator.serviceWorker.register(swUrl, { scope: "./" }).catch((err) => {
       console.warn("[sw] registration failed", err);

@@ -31,12 +31,17 @@ because a dependency changed.
 **Locally**
 
 ```bash
-cd "path/to/this/folder" && python3 -m http.server 8765
+python3 tools/serve.py
 ```
 
 Then open <http://localhost:8765/>. It needs to be served over `http://`, not
 opened as a `file://` path, because ES modules and service workers require an
 origin.
+
+The bundled server sends `no-store`, unlike `python3 -m http.server`, so a
+reload actually picks up an edit. Add `?nosw=1` to the URL to switch the offline
+cache off for a session — a service worker quietly serving the previous copy of
+a file looks exactly like a change that did not take.
 
 **Publishing to GitHub Pages**
 
@@ -102,7 +107,30 @@ on `updatedAt`.
 
 ---
 
-## The formulary
+## The formulary, and what you actually prescribe
+
+The reference list is BNF-style generics. Most scripts written here are South
+African trade names — Adco-Dol, Purbac, Brufen — which that list has never heard
+of. So **the reference is a lookup, not a gate**:
+
+- Type any name. A **Prescribe "…"** button sits above the results the moment
+  what you have typed is not already in the list, and Enter does the same thing.
+  Nothing has to be filed anywhere first.
+- Every medicine you put on a script is remembered, with the strength and
+  frequency you used. Next time you type the first few letters it is there,
+  prefilled the way you wrote it.
+- What you prescribe ranks above the reference list, and is grouped under
+  **You prescribe** in the picker. Ten uses outweighs the difference between a
+  name that starts with your query and one that merely contains it.
+- Using a reference drug does not shadow it: metformin keeps its indications and
+  dosing guidance, but prefills the 850 mg b.d. you actually write rather than
+  the reference default.
+
+**Formulary → I prescribe** is that list, ordered by how often you reach for it.
+You can edit an entry, or forget one you added by mistake.
+
+After a few weeks the app's idea of a formulary is mostly your own prescribing
+vocabulary, with the reference sitting behind it for the indication search.
 
 `data/formulary.json` is generated from a text export — 610 medicines and 586
 indications, searchable by drug name or by condition.

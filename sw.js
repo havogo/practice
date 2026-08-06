@@ -7,7 +7,7 @@
 // Patient data never passes through here — it lives in IndexedDB.
 
 // Bump VERSION on every release that touches app/, styles/ or data/.
-const VERSION = "v3";
+const VERSION = "v4";
 const CACHE = `practice-${VERSION}`;
 
 // The PDF reader and text recogniser under vendor/ come to about 14 MB. They

@@ -24,7 +24,7 @@ export async function view(ctx) {
       <div class="chips" style="margin-bottom:12px">
         <button class="chip" data-mode="drug" aria-pressed="true">By drug name</button>
         <button class="chip" data-mode="condition" aria-pressed="false">By condition</button>
-        <button class="chip" data-mode="mine" aria-pressed="false">Mine</button>
+        <button class="chip" data-mode="mine" aria-pressed="false">I prescribe</button>
       </div>
 
       <div class="search">
@@ -71,13 +71,22 @@ export async function view(ctx) {
           <div class="card">
             <ul class="list">
               ${rows.map((d) => html`
-                <li><button class="list__item" data-drug="${d.id}">
+                <li><button class="list__item" data-drug-name="${d.name}">
                   <div class="list__body">
                     <div class="list__title">
                       ${d.name}${d.custom ? html` <span class="badge badge--muted">yours</span>` : ""}
                     </div>
-                    <div class="list__meta">${d.indications.join(" · ") || "—"}</div>
+                    <div class="list__meta">
+                      ${d.indications.join(" · ")
+                        || [d.lastUsed?.strength || d.default?.strength,
+                            d.lastUsed?.frequency || d.default?.frequency].filter(Boolean).join(" ")
+                        || "—"}
+                    </div>
                   </div>
+                  ${d.useCount
+                    ? html`<div class="list__trail">${d.useCount === 1
+                        ? "once" : `${d.useCount}×`}</div>`
+                    : ""}
                   <span class="list__chevron">${icon("chevronRight", { size: 18 })}</span>
                 </button></li>
               `)}
@@ -112,7 +121,9 @@ export async function view(ctx) {
           : "Search drugs";
         drawActive();
         if (mode === "condition" && !activeCondition) drawConditions();
-        else drawDrugs(mode === "mine" ? drugs.filter((d) => d.custom) : drugs);
+        // "I prescribe" means anything actually used, whether it came from the
+        // reference list or was typed in — not only the hand-added entries.
+        else drawDrugs(mode === "mine" ? drugs.filter((d) => d.custom || d.useCount > 0) : drugs);
       }
 
       redraw();
@@ -142,9 +153,10 @@ export async function view(ctx) {
           redraw();
           return;
         }
-        const drugEl = event.target.closest("[data-drug]");
+        const drugEl = event.target.closest("[data-drug-name]");
         if (drugEl) {
-          const drug = drugs.find((d) => d.id === drugEl.dataset.drug);
+          const wanted = drugEl.dataset.drugName.toLowerCase();
+          const drug = drugs.find((d) => d.name.toLowerCase() === wanted);
           if (drug) await showDrug(drug);
         }
       });
@@ -188,15 +200,26 @@ export async function view(ctx) {
                   </div>
                 </div>` : ""}
 
+            ${drug.useCount
+              ? html`<p class="small muted" style="margin-top:16px">
+                  You have prescribed this ${drug.useCount === 1 ? "once" : `${drug.useCount} times`}${
+                    drug.lastUsed?.strength || drug.lastUsed?.frequency
+                      ? `, most recently as ${[drug.lastUsed.strength, drug.lastUsed.frequency].filter(Boolean).join(" ")}`
+                      : ""
+                  }.
+                </p>`
+              : ""}
+
             <div class="section stack">
               <button class="btn btn--primary btn--block" data-pick="prescribe">
                 ${icon("script")} Write a script with this
               </button>
               ${drug.custom
-                ? html`
-                  <button class="btn btn--outline btn--block" data-pick="edit">${icon("edit")} Edit</button>
-                  <button class="btn btn--ghost btn--block" data-pick="delete" style="color:var(--danger-500)">
-                    Remove from my formulary
+                ? html`<button class="btn btn--outline btn--block" data-pick="edit">${icon("edit")} Edit</button>`
+                : ""}
+              ${drug.personalId
+                ? html`<button class="btn btn--ghost btn--block" data-pick="delete" style="color:var(--danger-500)">
+                    ${drug.custom ? "Remove from my formulary" : "Forget that I prescribe this"}
                   </button>`
                 : ""}
             </div>
@@ -217,18 +240,21 @@ export async function view(ctx) {
           sessionStorage.setItem("rx:seed-drug", drug.id);
           router.go("/prescribe");
         } else if (chosen === "edit") {
-          const saved = await editOwnMedicine(await store.medicines.get(drug.id));
+          const saved = await editOwnMedicine(await store.medicines.get(drug.personalId));
           if (saved) ctx.refresh();
         } else if (chosen === "delete") {
           const ok = await confirmDialog({
-            title: `Remove ${drug.name}?`,
-            message: "It will no longer appear in your formulary. Existing prescriptions are unaffected.",
-            confirmLabel: "Remove",
+            title: drug.custom ? `Remove ${drug.name}?` : `Forget ${drug.name}?`,
+            message: drug.custom
+              ? "It will no longer appear in your formulary. Existing prescriptions are unaffected."
+              : "It stays in the reference formulary, but stops being ranked as one you prescribe. " +
+                "Existing prescriptions are unaffected.",
+            confirmLabel: drug.custom ? "Remove" : "Forget",
             danger: true,
           });
           if (ok) {
-            await store.medicines.remove(drug.id);
-            toast("Removed");
+            await store.medicines.remove(drug.personalId);
+            toast(drug.custom ? "Removed" : "Forgotten");
             ctx.refresh();
           }
         }
