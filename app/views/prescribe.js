@@ -240,6 +240,12 @@ function renderBody({ draft, patient, issued }) {
       <button class="btn btn--secondary btn--block" data-act="add-medicine" style="margin-top:12px">
         ${icon("plus", { size: 18 })} Add medicine
       </button>
+
+      ${!draft.items.length && !draft.id
+        ? html`<button class="btn btn--ghost btn--block" data-nav="/import" style="margin-top:8px">
+            ${icon("camera", { size: 18 })} Import from a photo or PDF
+          </button>`
+        : ""}
     </div>
 
     <div class="section">

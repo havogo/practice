@@ -37,10 +37,13 @@ export async function view() {
     content: html`
       <p class="view__subtitle">${formatDate(today, { weekday: "long" })}</p>
 
-      <div class="btn-row btn-row--split" style="margin-bottom:20px">
+      <div class="btn-row btn-row--split" style="margin-bottom:8px">
         <button class="btn btn--primary" data-nav="/prescribe">${icon("script")} New script</button>
         <button class="btn btn--outline" data-nav="/patients/new">${icon("plus")} New patient</button>
       </div>
+      <button class="btn btn--ghost btn--block" data-nav="/import" style="margin-bottom:20px">
+        ${icon("camera", { size: 18 })} Import an old script
+      </button>
 
       <div class="tiles">
         <button class="tile" data-nav="/history">

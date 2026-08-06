@@ -6,8 +6,14 @@
 //
 // Patient data never passes through here — it lives in IndexedDB.
 
-const VERSION = "v1";
+// Bump VERSION on every release that touches app/, styles/ or data/.
+const VERSION = "v2";
 const CACHE = `practice-${VERSION}`;
+
+// The PDF reader and text recogniser under vendor/ come to about 14 MB. They
+// are cached the first time an import actually needs them, never up front —
+// nobody should pay for that to open the app and write a script.
+const LAZY_PREFIX = "/vendor/";
 
 const SHELL = [
   "./",
@@ -37,6 +43,9 @@ const SHELL = [
   "./app/views/invoice.js",
   "./app/views/history.js",
   "./app/views/settings.js",
+  "./app/views/import.js",
+  "./app/extract.js",
+  "./app/rx-parse.js",
   "./icons/icon.svg",
 ];
 
@@ -73,17 +82,24 @@ self.addEventListener("fetch", (event) => {
   event.respondWith(
     (async () => {
       const cache = await caches.open(CACHE);
-      const cached = await cache.match(request, { ignoreSearch: true });
+      // Only a navigation may ignore the query string — "index.html?x=1" is the
+      // same document. For everything else the query is part of the identity,
+      // so a versioned asset URL is not answered with the previous version.
+      const cached = await cache.match(request, { ignoreSearch: request.mode === "navigate" });
 
       const network = fetch(request)
         .then((response) => {
-          if (response.ok) cache.put(request, response.clone());
+          // Opaque and partial responses must not be stored: a 206 cannot be
+          // replayed as a whole file, which would corrupt a vendored wasm blob.
+          if (response.ok && response.status === 200) cache.put(request, response.clone());
           return response;
         })
         .catch(() => null);
 
       if (cached) {
-        event.waitUntil(network); // refresh in the background
+        // Vendored libraries are immutable at a given version, so re-fetching
+        // 14 MB in the background every time would be pure waste.
+        if (!url.pathname.includes(LAZY_PREFIX)) event.waitUntil(network);
         return cached;
       }
 

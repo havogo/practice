@@ -18,6 +18,7 @@ const TABS = [
 const VIEWS = {
   "/": () => import("./views/dashboard.js"),
   "/prescribe": () => import("./views/prescribe.js"),
+  "/import": () => import("./views/import.js"),
   "/prescribe/:id": () => import("./views/prescribe.js"),
   "/patients": () => import("./views/patients.js"),
   "/patients/new": () => import("./views/patient-edit.js"),

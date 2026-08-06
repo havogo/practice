@@ -73,6 +73,7 @@ sw.js                    offline cache
 styles/app.css           design system (light + dark, iOS safe areas)
 data/formulary.json      generated — do not edit by hand
 icons/                   generated — see tools/make_icons.py
+vendor/                  third-party libraries, loaded only when importing
 app/
   main.js                routing, chrome, boot
   router.js              hash router
@@ -81,6 +82,8 @@ app/
   store.js               records and repositories
   formulary.js           reference + personal medicines, search
   script.js              the printed/shared prescription
+  extract.js             photo/PDF -> text
+  rx-parse.js            text -> structured prescription
   backup.js              export, restore, merge
   sync.js                optional Supabase sync
   components.js          sheets, pickers
@@ -118,6 +121,36 @@ field is left blank — the app will not put a number on a script that you did n
 choose. Anything you add yourself under **Formulary → Add** is stored in
 IndexedDB, searched alongside the reference list, and overrides a reference
 entry of the same name.
+
+---
+
+## Importing an old prescription
+
+**Prescribe → Import from a photo or PDF**, or the button on Today.
+
+Three routes in, in descending order of accuracy:
+
+| Source | How it is read | Accuracy |
+|---|---|---|
+| A PDF with a text layer (anything you printed to PDF yourself) | read straight out of the file | exact |
+| Text pasted in | as given | exact |
+| A photograph, or a scanned PDF | optical character recognition | good, not perfect |
+
+Whatever comes out is matched against the formulary, which is what repairs a
+misread name: `Metfomin` scores 0.86 against *Metformin hydrochloride* and is
+corrected, while `5OOmg` becomes `500 mg`. A name the matcher cannot place is
+flagged rather than guessed, and can be added to your own formulary in one tap —
+which is how trade names like *Glucophage XR* get into your list.
+
+The result is always a **draft**. Nothing is issued from a machine reading of a
+script.
+
+> On an iPhone the phone's own text recognition beats the one in the app. Open
+> the photo, press and hold the text, **Copy**, then use **Paste text**.
+
+The libraries that do this — a PDF reader and a text recogniser — live in
+`vendor/` and total about 12 MB. They are fetched only the first time you import
+something, then cached, so they cost nothing to open the app or write a script.
 
 ---
 
