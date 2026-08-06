@@ -43,29 +43,16 @@ reload actually picks up an edit. Add `?nosw=1` to the URL to switch the offline
 cache off for a session — a service worker quietly serving the previous copy of
 a file looks exactly like a change that did not take.
 
-**Publishing to GitHub Pages**
+**Publishing, installing on the phone, and setting up sync**
 
-```bash
-git remote add origin git@github.com:YOUR-USERNAME/practice.git && git push -u origin main
-```
+See **[DEPLOY.md](DEPLOY.md)** — step by step, including what to click on GitHub
+and Supabase, and what to do when something does not work.
 
-Then in the repository: **Settings → Pages → Source: Deploy from a branch →
-`main` / `(root)`**. A minute later it is live at
-`https://YOUR-USERNAME.github.io/practice/`.
-
-A public repository means the *code* is public. It does **not** publish any
-patient data — records never leave the device unless you switch sync on. If you
-would rather the code were private too, GitHub Pages works from private
-repositories on a paid plan; otherwise Cloudflare Pages hosts private repos free.
-
-**Installing on the iPhone**
-
-Open the published URL in Safari → Share → **Add to Home Screen**.
-
-This matters more than it sounds. In a Safari tab, iOS may evict the app's
-storage after roughly seven days of disuse. Installed to the Home Screen, the
-app requests persistent storage and iOS stops treating it as disposable. The
-Settings screen tells you which state you are in.
+The short version: push to GitHub, turn on Pages from `main` / `(root)`, then
+open the address in Safari and **Add to Home Screen**. That last step matters
+more than it sounds — in a Safari tab iOS may evict the app's storage after a
+stretch of disuse; installed, it grants persistent storage instead. The Settings
+screen tells you which state you are in.
 
 ---
 
