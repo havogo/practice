@@ -17,10 +17,23 @@ export const state = {
   configured: false,
   signedIn: false,
   email: null,
-  lastSyncAt: null,
+  lastSyncAt: null,     // shown to the user; local clock
   lastError: null,
   running: false,
 };
+
+// Two separate watermarks, because two different clocks are involved.
+//
+//   cursor    – the highest server-stamped synced_at this device has seen.
+//               Paging on it is safe no matter how far apart device clocks are;
+//               paging on a client-written timestamp is not, because a device
+//               running slow writes records that a faster device has already
+//               scrolled past and would never pull.
+//   pushedAt  – this device's own clock at its last push, used only to decide
+//               which local records are new enough to send. Same clock on both
+//               sides of that comparison, so skew cannot affect it.
+let cursor = null;
+let pushedAt = null;
 
 let config = null;   // { url, anonKey }
 let session = null;  // { access_token, refresh_token, expires_at, user }
@@ -29,17 +42,35 @@ export async function init() {
   config = await store.getSetting("sync.config", null);
   session = await store.getSetting("sync.session", null);
   state.lastSyncAt = await store.getSetting("sync.lastSyncAt", null);
+  cursor = await store.getSetting("sync.cursor", null);
+  pushedAt = await store.getSetting("sync.pushedAt", null);
   state.configured = Boolean(config?.url && config?.anonKey);
   state.signedIn = Boolean(session?.access_token);
   state.email = session?.user?.email || null;
   return state;
 }
 
-export async function configure({ url, anonKey }) {
-  const clean = String(url || "").trim().replace(/\/+$/, "");
-  if (!/^https:\/\/[\w-]+\.supabase\.co$/.test(clean)) {
-    throw new Error("That does not look like a Supabase project URL (https://xxxx.supabase.co).");
+/** Loopback is allowed over http so the sync client can be tested locally. */
+function validateEndpoint(raw) {
+  const clean = String(raw || "").trim().replace(/\/+$/, "");
+  let parsed;
+  try {
+    parsed = new URL(clean);
+  } catch {
+    throw new Error("That is not a valid web address. It should look like https://abcdefgh.supabase.co");
   }
+  const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname);
+  if (parsed.protocol !== "https:" && !loopback) {
+    throw new Error("The project URL must start with https:// — patient records must not travel unencrypted.");
+  }
+  if (parsed.pathname !== "/" && parsed.pathname !== "") {
+    throw new Error("Use only the project URL itself, with nothing after the domain.");
+  }
+  return parsed.origin;
+}
+
+export async function configure({ url, anonKey }) {
+  const clean = validateEndpoint(url);
   if (!String(anonKey || "").trim()) throw new Error("The anon key is required.");
   config = { url: clean, anonKey: String(anonKey).trim() };
   await store.setSetting("sync.config", config);
@@ -84,7 +115,15 @@ async function api(path, { method = "GET", body, headers = {}, auth = true } = {
     const text = await res.text().catch(() => "");
     throw new Error(`${res.status} ${res.statusText}${text ? ` — ${text.slice(0, 200)}` : ""}`);
   }
-  return res.status === 204 ? null : res.json();
+  // A push asks for `return=minimal`, so a success comes back with no body at
+  // all. Calling res.json() on that throws, which would fail every push.
+  const text = await res.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`The server replied with something that is not JSON: ${text.slice(0, 120)}`);
+  }
 }
 
 // --- Authentication ---------------------------------------------------------
@@ -141,8 +180,8 @@ const toRow = (storeName, record, ownerId) => ({
 });
 
 async function pull(since) {
-  const query = new URLSearchParams({ select: "*", order: "updated_at.asc" });
-  if (since) query.set("updated_at", `gt.${since}`);
+  const query = new URLSearchParams({ select: "*", order: "synced_at.asc" });
+  if (since) query.set("synced_at", `gt.${since}`);
   const rows = await api(`/rest/v1/${TABLE}?${query}`);
 
   const existing = await db.snapshot(SYNCED_STORES);
@@ -152,21 +191,31 @@ async function pull(since) {
   }
 
   const incoming = {};
-  let applied = 0;
+  const appliedIds = new Set();
+  let highest = since;
+
   for (const row of rows) {
+    if (row.synced_at && (!highest || row.synced_at > highest)) highest = row.synced_at;
     if (!SYNCED_STORES.includes(row.store)) continue;
     const mine = current.get(row.id);
-    // Last write wins. Equal timestamps keep what is already on the device.
-    if (mine && String(mine.updatedAt || "") >= String(row.updated_at || "")) continue;
+    // Conflicts resolve on updated_at — when the prescriber actually edited the
+    // record — not on synced_at, which only says when it reached the server.
+    //
+    // The comparison uses the timestamp inside the payload, not the row column:
+    // Postgres hands back "…+00:00" where JavaScript wrote "…Z", and comparing
+    // those two spellings as strings gives the wrong answer for the same
+    // instant. Both sides of this comparison were written by a browser.
+    const theirs = String(row.payload?.updatedAt || "");
+    if (mine && String(mine.updatedAt || "") >= theirs) continue;
     (incoming[row.store] ||= []).push(row.payload);
-    applied += 1;
+    appliedIds.add(row.id);
   }
 
-  if (applied) await db.replaceAll(incoming, { merge: true });
-  return { pulled: rows.length, applied };
+  if (appliedIds.size) await db.replaceAll(incoming, { merge: true });
+  return { pulled: rows.length, applied: appliedIds.size, cursor: highest, appliedIds };
 }
 
-async function push(since) {
+async function push(since, skipIds = new Set()) {
   const ownerId = session?.user?.id;
   if (!ownerId) throw new Error("Not signed in.");
 
@@ -174,6 +223,8 @@ async function push(since) {
   const rows = [];
   for (const name of SYNCED_STORES) {
     for (const record of local[name] || []) {
+      // Records just written by the pull would otherwise be echoed straight back.
+      if (skipIds.has(`${name}:${record.id}`)) continue;
       if (since && String(record.updatedAt || "") <= since) continue;
       rows.push(toRow(name, record, ownerId));
     }
@@ -200,15 +251,22 @@ export async function run({ full = false } = {}) {
 
   state.running = true;
   state.lastError = null;
-  const since = full ? null : state.lastSyncAt;
   const startedAt = new Date().toISOString();
 
   try {
-    const pulled = await pull(since);
-    const pushed = await push(since);
+    const pulled = await pull(full ? null : cursor);
+    const pushed = await push(full ? null : pushedAt, pulled.appliedIds);
+
+    // Both watermarks only advance once the whole cycle succeeded, so a failure
+    // half way through means the next run repeats the work rather than skipping it.
+    cursor = pulled.cursor ?? cursor;
+    pushedAt = startedAt;
     state.lastSyncAt = startedAt;
+    await store.setSetting("sync.cursor", cursor);
+    await store.setSetting("sync.pushedAt", pushedAt);
     await store.setSetting("sync.lastSyncAt", startedAt);
-    return { ...pulled, ...pushed, at: startedAt };
+
+    return { pulled: pulled.pulled, applied: pulled.applied, pushed: pushed.pushed, at: startedAt };
   } catch (err) {
     state.lastError = String(err?.message || err);
     throw err;
@@ -219,22 +277,48 @@ export async function run({ full = false } = {}) {
 
 /** The SQL a new Supabase project needs. Shown in Settings so it can be copied. */
 export const SETUP_SQL = `-- Run once in the Supabase SQL editor.
+
 create table if not exists public.records (
   id          text primary key,
   owner       uuid not null references auth.users (id) on delete cascade,
   store       text not null,
   record_id   text not null,
-  updated_at  timestamptz not null,
+  updated_at  timestamptz not null,          -- when the record was edited (device clock)
+  synced_at   timestamptz not null default now(),  -- when it reached the server
   deleted     boolean not null default false,
   payload     jsonb not null
 );
 
-create index if not exists records_owner_updated_idx
-  on public.records (owner, updated_at);
+-- Devices page on synced_at, which comes from one clock — the server's. Paging
+-- on updated_at would lose records written by a device whose clock runs slow.
+create or replace function public.touch_synced_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.synced_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists records_touch_synced_at on public.records;
+create trigger records_touch_synced_at
+  before insert or update on public.records
+  for each row execute function public.touch_synced_at();
+
+create index if not exists records_owner_synced_idx
+  on public.records (owner, synced_at);
+
+-- Row-level security decides which rows; these grants decide whether the
+-- signed-in role may touch the table at all. Supabase usually applies them by
+-- default — stating them explicitly avoids a confusing "permission denied".
+grant usage on schema public to authenticated;
+grant select, insert, update, delete on public.records to authenticated;
 
 alter table public.records enable row level security;
 
--- Each account sees only its own rows.
+-- Each account reads and writes only its own rows.
+drop policy if exists "own rows" on public.records;
 create policy "own rows" on public.records
   for all
   using (auth.uid() = owner)

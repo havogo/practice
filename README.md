@@ -173,9 +173,41 @@ control rather than one belonging to this app.
 The anon key is designed to be public — row-level security is what protects the
 data, not the key.
 
-> Sync is written against Supabase's REST and auth endpoints and is wired up but
-> has **not** been run against a live project. Test it with a throwaway patient
-> before trusting it, and keep exporting backups either way.
+### How conflicts are settled
+
+Two clocks are involved, and they are used for different things:
+
+- **`updated_at`** is written by the device that made the edit, and decides which
+  version of a record wins. Later edit wins; a tie keeps what is already on the
+  device. This is the right basis because it reflects when *you* changed
+  something.
+- **`synced_at`** is stamped by the server, and is the only thing devices page
+  on. If paging used `updated_at`, a phone whose clock ran a few minutes slow
+  would write records that a laptop had already scrolled past, and those records
+  would never arrive.
+
+Deletes are tombstones, so a delete propagates like any other edit.
+
+### Testing sync without a Supabase project
+
+`tools/mock_supabase.py` implements the endpoints `app/sync.js` depends on, and
+`tools/sync-test.js` drives the real client against it — two simulated devices,
+conflicts, tombstones, token expiry, chunked pushes and clock skew.
+
+```bash
+python3 tools/mock_supabase.py 8799
+```
+
+With that running and the app served, open the app and run in the console:
+
+```js
+const t = await import('/tools/sync-test.js'); console.table((await t.run(console.log)).results)
+```
+
+Sixteen checks, all passing as of the last run. What this does **not** cover is
+Supabase itself: the SQL above has not been executed against a live Postgres, so
+run it and do one round trip with a throwaway patient before trusting sync with
+real records. Keep exporting backups either way.
 
 ---
 
