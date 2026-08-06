@@ -1,0 +1,12 @@
+.DS_Store
+*.log
+__pycache__/
+
+# Patient-identifying material must never reach the repository, which may be
+# published to GitHub Pages. Keep source scripts and formulary exports outside
+# the working tree, or here where git will not pick them up.
+*.pdf
+/private/
+
+# Local Claude Code harness settings
+.claude/
