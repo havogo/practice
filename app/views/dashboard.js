@@ -41,9 +41,14 @@ export async function view() {
         <button class="btn btn--primary" data-nav="/prescribe">${icon("script")} New script</button>
         <button class="btn btn--outline" data-nav="/patients/new">${icon("plus")} New patient</button>
       </div>
-      <button class="btn btn--ghost btn--block" data-nav="/import" style="margin-bottom:20px">
-        ${icon("camera", { size: 18 })} Import an old script
-      </button>
+      <div class="btn-row btn-row--split" style="margin-bottom:20px">
+        <button class="btn btn--ghost" data-act="new-certificate">
+          ${icon("check", { size: 18 })} Certificate
+        </button>
+        <button class="btn btn--ghost" data-nav="/import">
+          ${icon("camera", { size: 18 })} Import a script
+        </button>
+      </div>
 
       <div class="tiles">
         <button class="tile" data-nav="/history">
@@ -104,6 +109,16 @@ export async function view() {
           </div>`
         : ""}
     `,
+    mount(root) {
+      root.addEventListener("action", async ({ detail: { act } }) => {
+        if (act !== "new-certificate") return;
+        const { pickPatient } = await import("../components.js");
+        const chosen = await pickPatient();
+        if (!chosen) return;
+        const cert = await store.certificates.save(store.newCertificate({ patientId: chosen.id }));
+        window.location.hash = `#/certificates/${cert.id}`;
+      });
+    },
   };
 }
 

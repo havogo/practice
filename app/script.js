@@ -32,11 +32,8 @@ function patientLabel(patient) {
 // Print
 // ---------------------------------------------------------------------------
 
-export function scriptMarkup({ prescriber, patient, prescription }) {
-  const footer = [prescriber.addressLine, prescriber.postalLine, prescriber.email, prescriber.phone]
-    .filter(Boolean)
-    .join(" | ");
-
+/** The letterhead, shared by every document the practice puts on paper. */
+export function letterhead(prescriber) {
   return html`
     <div class="script__header">
       <div class="script__name">${prescriber.name}</div>
@@ -48,8 +45,33 @@ export function scriptMarkup({ prescriber, patient, prescription }) {
         ${prescriber.practiceNumber ? html`Practice Number: ${prescriber.practiceNumber}` : ""}
       </div>
     </div>
-
     <hr class="script__rule">
+  `;
+}
+
+export function letterFooter(prescriber) {
+  const line = [prescriber.addressLine, prescriber.postalLine, prescriber.email, prescriber.phone]
+    .filter(Boolean)
+    .join(" | ");
+  return html`<div class="script__footer">${line}</div>`;
+}
+
+export function signatureBlock(prescriber, dateValue) {
+  return html`
+    <div class="script__sign">
+      <div class="script__meta">${formatDate(dateValue) || dateValue}</div>
+      ${prescriber.signatureImage
+        ? html`<img class="script__sig-img" src="${prescriber.signatureImage}" alt="">`
+        : ""}
+      <div class="script__sign-line"></div>
+      <div class="script__sign-label">${prescriber.name}<br>Signature</div>
+    </div>
+  `;
+}
+
+export function scriptMarkup({ prescriber, patient, prescription }) {
+  return html`
+    ${letterhead(prescriber)}
 
     <div class="script__patient">
       <div class="script__field"><b>Re:</b> ${store.patientName(patient)}</div>
@@ -77,16 +99,8 @@ export function scriptMarkup({ prescriber, patient, prescription }) {
 
     ${prescription.notes ? html`<div class="script__meta">${prescription.notes}</div>` : ""}
 
-    <div class="script__sign">
-      <div class="script__meta">${formatDate(prescription.issuedAt) || prescription.issuedAt}</div>
-      ${prescriber.signatureImage
-        ? html`<img class="script__sig-img" src="${prescriber.signatureImage}" alt="">`
-        : ""}
-      <div class="script__sign-line"></div>
-      <div class="script__sign-label">Signature</div>
-    </div>
-
-    <div class="script__footer">${footer}</div>
+    ${signatureBlock(prescriber, prescription.issuedAt)}
+    ${letterFooter(prescriber)}
   `;
 }
 

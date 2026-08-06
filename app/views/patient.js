@@ -12,10 +12,11 @@ export async function view(ctx) {
       content: html`<p class="muted">This patient no longer exists.</p>` };
   }
 
-  const [scripts, notes, bills, prefs] = await Promise.all([
+  const [scripts, notes, bills, certs, prefs] = await Promise.all([
     store.prescriptions.byPatient(patient.id),
     store.encounters.byPatient(patient.id),
     store.invoices.byPatient(patient.id),
+    store.certificates.byPatient(patient.id),
     store.getPreferences(),
   ]);
 
@@ -42,6 +43,11 @@ export async function view(ctx) {
           <button class="btn btn--primary btn--sm" data-nav="/prescribe?patient=${patient.id}">
             ${icon("script", { size: 16 })} Script
           </button>
+          <button class="btn btn--outline btn--sm" data-act="new-certificate">
+            ${icon("check", { size: 16 })} Certificate
+          </button>
+        </div>
+        <div class="btn-row btn-row--split" style="margin-top:8px">
           <button class="btn btn--outline btn--sm" data-act="new-note">
             ${icon("note", { size: 16 })} Note
           </button>
@@ -112,6 +118,38 @@ export async function view(ctx) {
           : html`<p class="muted small" style="padding:4px">No notes yet.</p>`}
       </div>
 
+      ${certs.length
+        ? html`<div class="section">
+            <div class="section__head">
+              <span class="section__title">Certificates</span>
+              <span class="small muted">${certs.length}</span>
+            </div>
+            <div class="card"><ul class="list">
+              ${certs.slice(0, 6).map((c) => {
+                const days = store.certificateDays(c);
+                return html`
+                  <li><button class="list__item" data-nav="/certificates/${c.id}">
+                    <div class="list__body">
+                      <div class="list__title">${store.CERTIFICATE_TYPES[c.type] || "Certificate"}</div>
+                      <div class="list__meta">
+                        ${c.type === "attendance" || c.capacity === "fit"
+                          ? formatDate(c.examinedOn)
+                          : `${formatDate(c.fromDate)} – ${formatDate(c.toDate)}${days ? ` · ${days} day${days === 1 ? "" : "s"}` : ""}`}
+                      </div>
+                    </div>
+                    <div class="list__trail">
+                      ${c.status === "issued"
+                        ? formatDate(c.date, { month: "short", day: "numeric" })
+                        : html`<span class="badge badge--warn">Draft</span>`}
+                    </div>
+                    <span class="list__chevron">${icon("chevronRight", { size: 18 })}</span>
+                  </button></li>
+                `;
+              })}
+            </ul></div>
+          </div>`
+        : ""}
+
       ${bills.length
         ? html`<div class="section">
             <div class="section__head"><span class="section__title">Invoices</span></div>
@@ -157,6 +195,9 @@ export async function view(ctx) {
           const number = await store.nextInvoiceNumber();
           const invoice = await store.invoices.save(store.newInvoice({ patientId: patient.id, number }));
           router.go(`/invoices/${invoice.id}`);
+        } else if (act === "new-certificate") {
+          const cert = await store.certificates.save(store.newCertificate({ patientId: patient.id }));
+          router.go(`/certificates/${cert.id}`);
         }
       });
     },

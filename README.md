@@ -124,6 +124,29 @@ entry of the same name.
 
 ---
 
+## Certificates
+
+**Patient → Certificate**, or from Today.
+
+Four kinds: sick leave, fitness to work, fitness to participate, and attendance.
+The form is shaped by what a certificate is expected to state rather than being
+a free-text box, so the awkward parts are hard to leave out:
+
+- **the basis** — whether you examined the patient or are repeating what they
+  told you. Choosing the second prints that plainly rather than implying an
+  observation you did not make.
+- **disclosure** — the nature of the condition appears only if you tick to print
+  it. Left off, it reads "a medical condition" and adds a line saying the nature
+  was withheld at the patient's request.
+- **capacity** — unfit, lighter duties only, or fit to resume.
+- **the period**, inclusive of both dates, with the day count shown as you type.
+
+The sentence that carries the clinical claim is assembled from those fields and
+shown live under **How it will read**, so what prints is never a surprise. It
+comes out on the same letterhead as a script, and shares the same way.
+
+---
+
 ## Importing an old prescription
 
 **Prescribe → Import from a photo or PDF**, or the button on Today.

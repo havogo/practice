@@ -8,7 +8,8 @@ import * as db from "./db.js";
 import { isoDate } from "./ui.js";
 
 const BACKUP_STORES = [
-  "patients", "prescriptions", "encounters", "invoices", "medicines", "attachments", "settings",
+  "patients", "prescriptions", "encounters", "invoices", "certificates",
+  "medicines", "attachments", "settings",
 ];
 
 const FORMAT = "practice-backup";

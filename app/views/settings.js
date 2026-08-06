@@ -243,7 +243,8 @@ export async function view(ctx) {
             danger: true,
           });
           if (!reallyOk) return;
-          for (const name of ["patients", "prescriptions", "encounters", "invoices", "medicines", "attachments"]) {
+          for (const name of ["patients", "prescriptions", "encounters", "invoices",
+                              "certificates", "medicines", "attachments"]) {
             await db.clear(name);
           }
           toast("All local records erased");

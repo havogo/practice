@@ -6,7 +6,9 @@
 // subject to Safari's eviction of unused website data.
 
 const DB_NAME = "practice";
-const DB_VERSION = 1;
+// v2 added the certificates store. Upgrades are additive, so an older install
+// gains the new store without touching the records already on the device.
+const DB_VERSION = 2;
 
 /** Every store carries the same envelope so sync and backup stay generic. */
 export const STORES = {
@@ -14,6 +16,7 @@ export const STORES = {
   prescriptions: { keyPath: "id", indexes: [["updatedAt", "updatedAt"], ["patientId", "patientId"], ["issuedAt", "issuedAt"]] },
   encounters: { keyPath: "id", indexes: [["updatedAt", "updatedAt"], ["patientId", "patientId"], ["date", "date"]] },
   invoices: { keyPath: "id", indexes: [["updatedAt", "updatedAt"], ["patientId", "patientId"], ["number", "number"]] },
+  certificates: { keyPath: "id", indexes: [["updatedAt", "updatedAt"], ["patientId", "patientId"], ["date", "date"]] },
   medicines: { keyPath: "id", indexes: [["updatedAt", "updatedAt"], ["name", "name"]] },
   attachments: { keyPath: "id", indexes: [["updatedAt", "updatedAt"], ["patientId", "patientId"]] },
   settings: { keyPath: "key", indexes: [] },

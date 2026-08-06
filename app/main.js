@@ -28,6 +28,7 @@ const VIEWS = {
   "/formulary": () => import("./views/formulary.js"),
   "/billing": () => import("./views/billing.js"),
   "/invoices/:id": () => import("./views/invoice.js"),
+  "/certificates/:id": () => import("./views/certificate.js"),
   "/history": () => import("./views/history.js"),
   "/settings": () => import("./views/settings.js"),
 };

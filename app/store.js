@@ -81,6 +81,7 @@ export const patients = repo("patients", {
 export const prescriptions = repo("prescriptions", { sort: byDateDesc });
 export const encounters = repo("encounters", { sort: byDateDesc });
 export const invoices = repo("invoices", { sort: byDateDesc });
+export const certificates = repo("certificates", { sort: byDateDesc });
 export const medicines = repo("medicines", { sort: (a, b) => a.name.localeCompare(b.name) });
 export const attachments = repo("attachments", { sort: byUpdatedDesc });
 
@@ -131,6 +132,47 @@ export function newInvoice(seed = {}) {
     lines: [], notes: "", totalCents: 0,
     ...seed,
   };
+}
+
+export const CERTIFICATE_TYPES = {
+  "sick-leave": "Medical certificate — sick leave",
+  "fitness-to-work": "Certificate of fitness to work",
+  "fitness-to-participate": "Certificate of fitness to participate",
+  attendance: "Certificate of attendance",
+};
+
+/**
+ * Shaped by what the HPCSA requires a certificate to state: when the patient
+ * was seen, whether the practitioner observed the condition or was told about
+ * it, what the patient is capable of, and the exact period.
+ */
+export function newCertificate(seed = {}) {
+  return {
+    patientId: null,
+    type: "sick-leave",
+    date: isoDate(),
+    examinedOn: isoDate(),
+    examinedAt: "",
+    basis: "examination",          // examination | reported
+    condition: "",
+    disclose: false,               // print the condition, or "a medical condition"
+    capacity: "unfit",             // unfit | light-duties | fit
+    fromDate: isoDate(),
+    toDate: isoDate(),
+    employerRef: "",
+    remarks: "",
+    status: "draft",
+    ...seed,
+  };
+}
+
+/** Inclusive day count, so a single-day certificate reads as one day. */
+export function certificateDays(certificate) {
+  const from = new Date(certificate.fromDate);
+  const to = new Date(certificate.toDate);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return null;
+  const days = Math.round((to - from) / 86400000) + 1;
+  return days > 0 ? days : null;
 }
 
 export function invoiceTotal(invoice) {

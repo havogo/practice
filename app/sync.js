@@ -10,7 +10,9 @@
 import * as db from "./db.js";
 import * as store from "./store.js";
 
-const SYNCED_STORES = ["patients", "prescriptions", "encounters", "invoices", "medicines"];
+const SYNCED_STORES = [
+  "patients", "prescriptions", "encounters", "invoices", "certificates", "medicines",
+];
 const TABLE = "records";
 
 export const state = {
