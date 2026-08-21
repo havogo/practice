@@ -3,7 +3,7 @@
 import { html, mount, toast, confirmDialog, formatDate, ageFrom, isoDate, initials } from "../ui.js";
 import { icon } from "../icons.js";
 import * as store from "../store.js";
-import { pickPatient, pickMedicine, sheet } from "../components.js";
+import { pickPatient, pickMedicine, pickPastMedicines, sheet } from "../components.js";
 import { itemLine } from "../script.js";
 import { actionButtons, isDocAction, runDocAction } from "../docactions.js";
 import * as router from "../router.js";
@@ -138,6 +138,23 @@ export async function view(ctx) {
             redraw();
             // Put the cursor where the prescriber will type next.
             canvas.querySelector(".rx-item:last-of-type [data-field='dose']")?.focus();
+          }
+        } else if (act === "past-medicines") {
+          const chosen = await pickPastMedicines({
+            patientId: draft.patientId,
+            alreadyOn: draft.items.map((i) => i.name),
+          });
+          if (chosen.length) {
+            draft.items.push(...chosen.map((entry) => store.newPrescriptionItem({
+              name: entry.name,
+              drugId: entry.drugId || null,
+              strength: entry.strength,
+              dose: entry.dose,
+              frequency: entry.frequency,
+            })));
+            markDirty();
+            redraw();
+            toast(`Added ${chosen.length === 1 ? chosen[0].name : `${chosen.length} medicines`}`, "ok");
           }
         } else if (act === "repeat-last") {
           if (!context.lastScript) return;
@@ -318,6 +335,14 @@ function renderBody({ draft, patient, issued, context, dirty = false }) {
       <button class="btn btn--secondary btn--block" data-act="add-medicine" style="margin-top:12px">
         ${icon("plus", { size: 18 })} Add medicine
       </button>
+
+      ${context.drugHistory.size
+        ? html`
+          <button class="btn btn--outline btn--block" data-act="past-medicines" style="margin-top:8px">
+            ${icon("book", { size: 18 })} Past medicines
+            <span class="muted small" style="font-weight:400">· ${context.drugHistory.size}</span>
+          </button>`
+        : ""}
 
       ${context.lastScript && !draft.items.length
         ? html`

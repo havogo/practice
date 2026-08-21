@@ -244,13 +244,17 @@ export async function patientDrugHistory(patientId) {
       const key = String(item.name || "").trim().toLowerCase();
       if (!key) continue;
       const when = script.issuedAt || script.updatedAt || "";
-      const entry = history.get(key) || { count: 0, lastAt: "", strength: "", frequency: "", dose: "" };
+      const entry = history.get(key)
+        || { name: item.name.trim(), count: 0, lastAt: "", strength: "", frequency: "", dose: "", drugId: null };
       entry.count += 1;
       if (String(when) >= entry.lastAt) {
         entry.lastAt = String(when);
+        // The most recent spelling and dose is the one to offer back.
+        entry.name = item.name.trim() || entry.name;
         entry.strength = item.strength || entry.strength;
         entry.frequency = item.frequency || entry.frequency;
         entry.dose = item.dose || entry.dose;
+        entry.drugId = item.drugId || entry.drugId;
       }
       history.set(key, entry);
     }

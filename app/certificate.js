@@ -147,13 +147,11 @@ function wrapText(ctx, text, maxWidth) {
   return lines;
 }
 
-export async function certificateToBlob({ patient, certificate }) {
-  const prescriber = await store.getPrescriber();
-  const canvas = document.createElement("canvas");
-  canvas.width = PAGE.w;
-  canvas.height = PAGE.h;
-  const ctx = canvas.getContext("2d");
+const FOOTER_ZONE = 136;
+const SIGNATURE_GAP = 70;
 
+/** Draw the certificate, or measure it. See layoutScript in script.js. */
+function layoutCertificate(ctx, { prescriber, patient, certificate, signature, pageHeight, draw }) {
   const serif = '"Iowan Old Style", Palatino, Georgia, serif';
   const left = PAGE.margin;
   const right = PAGE.w - PAGE.margin;
@@ -161,10 +159,12 @@ export async function certificateToBlob({ patient, certificate }) {
   const centre = PAGE.w / 2;
   let y = PAGE.margin;
 
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, PAGE.w, PAGE.h);
-  ctx.fillStyle = "#000000";
-  ctx.textBaseline = "alphabetic";
+  if (draw) {
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, PAGE.w, pageHeight);
+    ctx.fillStyle = "#000000";
+    ctx.textBaseline = "alphabetic";
+  }
 
   const write = (text, { size = 24, weight = "400", align = "left", style = "normal", gap = 8, lineGap = 8 } = {}) => {
     ctx.font = `${style} ${weight} ${size}px ${serif}`;
@@ -172,10 +172,20 @@ export async function certificateToBlob({ patient, certificate }) {
     const x = align === "center" ? centre : left;
     for (const line of wrapText(ctx, text, width)) {
       y += size;
-      ctx.fillText(line, x, y);
+      if (draw) ctx.fillText(line, x, y);
       y += lineGap;
     }
     y += gap - lineGap;
+  };
+
+  const rule = (from, to, thickness) => {
+    if (!draw) return;
+    ctx.beginPath();
+    ctx.moveTo(from, y);
+    ctx.lineTo(to, y);
+    ctx.lineWidth = thickness;
+    ctx.strokeStyle = "#000";
+    ctx.stroke();
   };
 
   write(prescriber.name, { size: 40, weight: "700", align: "center", gap: 4, lineGap: 4 });
@@ -185,12 +195,7 @@ export async function certificateToBlob({ patient, certificate }) {
   if (prescriber.practiceNumber) write(`Practice Number: ${prescriber.practiceNumber}`, { size: 20, align: "center" });
 
   y += 26;
-  ctx.beginPath();
-  ctx.moveTo(left, y);
-  ctx.lineTo(right, y);
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = "#000";
-  ctx.stroke();
+  rule(left, right, 2);
   y += 40;
 
   write(TITLE[certificate.type] || TITLE["sick-leave"], { size: 30, weight: "700", align: "center", gap: 28 });
@@ -216,10 +221,51 @@ export async function certificateToBlob({ patient, certificate }) {
   }
   if (certificate.remarks) write(`Remarks: ${certificate.remarks}`, { size: 21, gap: 14, lineGap: 10 });
 
-  const footerY = PAGE.h - PAGE.margin;
-  y = Math.min(y + 70, footerY - 210);
+  const bodyBottom = y;
+
+  // Never clamped upward — the page grows instead, so the signature can never
+  // be stamped across the certificate's own wording.
+  const signatureHeight = (signature ? signature.height : 0) + 21 + 10 + 44 + 4 + 20 + 19 + 8;
+  y = Math.max(bodyBottom + SIGNATURE_GAP, pageHeight - FOOTER_ZONE - signatureHeight);
+
   write(formatDate(certificate.date) || certificate.date, { size: 21, gap: 10 });
 
+  if (signature && draw) ctx.drawImage(signature.img, left, y, signature.width, signature.height);
+  if (signature) y += signature.height;
+
+  y += 44;
+  rule(left, left + 360, 1.5);
+  y += 4;
+  write(prescriber.name, { size: 20, gap: 0, lineGap: 2 });
+  write("Signature", { size: 19 });
+
+  if (draw) {
+    const footerText = [prescriber.addressLine, prescriber.postalLine, prescriber.email, prescriber.phone]
+      .filter(Boolean)
+      .join(" | ");
+    const footerRuleY = pageHeight - PAGE.margin - 40;
+    ctx.beginPath();
+    ctx.moveTo(left, footerRuleY);
+    ctx.lineTo(right, footerRuleY);
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = "#000";
+    ctx.stroke();
+    ctx.font = `400 17px ${serif}`;
+    ctx.textAlign = "center";
+    let fy = footerRuleY + 24;
+    for (const line of wrapText(ctx, footerText, width)) {
+      ctx.fillText(line, centre, fy);
+      fy += 21;
+    }
+  }
+
+  return { bodyBottom, signatureHeight };
+}
+
+export async function certificateToCanvas({ patient, certificate }) {
+  const prescriber = await store.getPrescriber();
+
+  let signature = null;
   if (prescriber.signatureImage) {
     try {
       const img = await new Promise((resolve, reject) => {
@@ -228,41 +274,47 @@ export async function certificateToBlob({ patient, certificate }) {
         image.onerror = reject;
         image.src = prescriber.signatureImage;
       });
-      const h = Math.min(90, img.height);
-      ctx.drawImage(img, left, y, (img.width / img.height) * h, h);
-      y += h;
+      const height = Math.min(90, img.height);
+      signature = { img, height, width: (img.width / img.height) * height };
     } catch {
       /* a broken signature must not stop the certificate rendering */
     }
   }
 
-  y += 44;
-  ctx.beginPath();
-  ctx.moveTo(left, y);
-  ctx.lineTo(left + 360, y);
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-  y += 4;
-  write(prescriber.name, { size: 20, gap: 0, lineGap: 2 });
-  write("Signature", { size: 19 });
+  const probe = document.createElement("canvas").getContext("2d");
+  const measured = layoutCertificate(probe, {
+    prescriber, patient, certificate, signature, pageHeight: PAGE.h, draw: false,
+  });
+  const needed = measured.bodyBottom + SIGNATURE_GAP + measured.signatureHeight + FOOTER_ZONE;
+  const pageHeight = Math.max(PAGE.h, Math.ceil(needed));
 
-  const footerText = [prescriber.addressLine, prescriber.postalLine, prescriber.email, prescriber.phone]
-    .filter(Boolean)
-    .join(" | ");
-  ctx.beginPath();
-  ctx.moveTo(left, footerY - 40);
-  ctx.lineTo(right, footerY - 40);
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-  ctx.font = `400 17px ${serif}`;
-  ctx.textAlign = "center";
-  let fy = footerY - 16;
-  for (const line of wrapText(ctx, footerText, width)) {
-    ctx.fillText(line, centre, fy);
-    fy += 21;
-  }
+  const canvas = document.createElement("canvas");
+  canvas.width = PAGE.w;
+  canvas.height = pageHeight;
+  layoutCertificate(canvas.getContext("2d"), {
+    prescriber, patient, certificate, signature, pageHeight, draw: true,
+  });
+  return canvas;
+}
 
+export async function certificateToBlob({ patient, certificate }) {
+  const canvas = await certificateToCanvas({ patient, certificate });
   return new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+}
+
+export async function certificateToPdf({ patient, certificate }) {
+  const canvas = await certificateToCanvas({ patient, certificate });
+  const { canvasToPdf } = await import("./pdf.js");
+  return canvasToPdf(canvas);
+}
+
+export async function shareCertificatePdf({ patient, certificate }) {
+  const blob = await certificateToPdf({ patient, certificate });
+  return shareBlob({
+    blob,
+    filename: documentFilename({ prefix: "Certificate", patient, date: certificate.date, extension: "pdf" }),
+    title: `Medical certificate — ${store.patientName(patient)}`,
+  });
 }
 
 export async function shareCertificate({ patient, certificate }) {

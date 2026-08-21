@@ -137,13 +137,17 @@ function wrapText(ctx, text, maxWidth) {
   return lines;
 }
 
-export async function scriptToBlob({ patient, prescription }) {
-  const prescriber = await store.getPrescriber();
-  const canvas = document.createElement("canvas");
-  canvas.width = PAGE.w;
-  canvas.height = PAGE.h;
-  const ctx = canvas.getContext("2d");
+const FOOTER_ZONE = 136;   // rule, address lines, bottom margin
+const SIGNATURE_GAP = 80;  // clear space between the last medicine and the date
 
+/**
+ * Draw the script, or measure it without drawing.
+ *
+ * One routine for both passes so the measurement can never drift from what is
+ * actually rendered. Returns where the body ended and how tall the signature
+ * block is, which is what decides the page height.
+ */
+function layoutScript(ctx, { prescriber, patient, prescription, signature, pageHeight, draw }) {
   const serif = '"Iowan Old Style", Palatino, Georgia, serif';
   const left = PAGE.margin;
   const right = PAGE.w - PAGE.margin;
@@ -151,20 +155,32 @@ export async function scriptToBlob({ patient, prescription }) {
   const centre = PAGE.w / 2;
   let y = PAGE.margin;
 
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, PAGE.w, PAGE.h);
-  ctx.fillStyle = "#000000";
-  ctx.textBaseline = "alphabetic";
+  if (draw) {
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, PAGE.w, pageHeight);
+    ctx.fillStyle = "#000000";
+    ctx.textBaseline = "alphabetic";
+  }
 
-  const write = (text, { size = 24, weight = "400", align = "left", style = "normal", gap = 8 } = {}) => {
+  const write = (text, { size = 24, weight = "400", align = "left", style = "normal", gap = 8, indent = 0 } = {}) => {
     ctx.font = `${style} ${weight} ${size}px ${serif}`;
     ctx.textAlign = align;
-    const x = align === "center" ? centre : left;
-    for (const line of wrapText(ctx, text, width)) {
+    const x = align === "center" ? centre : left + indent;
+    for (const line of wrapText(ctx, text, width - indent)) {
       y += size;
-      ctx.fillText(line, x, y);
+      if (draw) ctx.fillText(line, x, y);
       y += gap;
     }
+  };
+
+  const rule = (from, to, thickness) => {
+    if (!draw) return;
+    ctx.beginPath();
+    ctx.moveTo(from, y);
+    ctx.lineTo(to, y);
+    ctx.lineWidth = thickness;
+    ctx.strokeStyle = "#000";
+    ctx.stroke();
   };
 
   write(prescriber.name, { size: 40, weight: "700", align: "center", gap: 4 });
@@ -174,12 +190,7 @@ export async function scriptToBlob({ patient, prescription }) {
   if (prescriber.practiceNumber) write(`Practice Number: ${prescriber.practiceNumber}`, { size: 20, align: "center" });
 
   y += 28;
-  ctx.beginPath();
-  ctx.moveTo(left, y);
-  ctx.lineTo(right, y);
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = "#000";
-  ctx.stroke();
+  rule(left, right, 2);
   y += 34;
 
   write(`Re:  ${patientLabel(patient)}`, { size: 26, weight: "600", gap: 6 });
@@ -194,15 +205,7 @@ export async function scriptToBlob({ patient, prescription }) {
   for (const item of prescription.items) {
     write(itemLine(item), { size: 26, gap: 4 });
     const sub = itemSubLine(item);
-    if (sub) {
-      ctx.font = `400 20px ${serif}`;
-      ctx.textAlign = "left";
-      for (const line of wrapText(ctx, sub, width - 40)) {
-        y += 22;
-        ctx.fillText(line, left + 40, y);
-        y += 2;
-      }
-    }
+    if (sub) write(sub, { size: 20, gap: 2, indent: 40 });
     y += 20;
   }
 
@@ -211,50 +214,111 @@ export async function scriptToBlob({ patient, prescription }) {
     write(prescription.notes, { size: 20, style: "italic" });
   }
 
-  // The signature follows the last item, but never runs into the footer.
-  const footerY = PAGE.h - PAGE.margin;
-  y = Math.min(y + 80, footerY - 200);
+  const bodyBottom = y;
+
+  // The signature sits at the foot of the page when the script is short, and
+  // directly under the last medicine when it is long. It is never pulled back
+  // up over the content — the page grows instead.
+  const signatureHeight = (signature ? signature.height + 8 : 0) + 22 + 10 + 46 + 6 + 20 + 8;
+  const restingTop = pageHeight - FOOTER_ZONE - signatureHeight;
+  y = Math.max(bodyBottom + SIGNATURE_GAP, restingTop);
+
   write(formatDate(prescription.issuedAt) || prescription.issuedAt, { size: 22, gap: 10 });
 
+  if (signature && draw) {
+    ctx.drawImage(signature.img, left, y, signature.width, signature.height);
+  }
+  if (signature) y += signature.height + 8;
+
+  y += 46;
+  rule(left, left + 360, 1.5);
+  y += 6;
+  write("Signature", { size: 20 });
+
+  // The footer is pinned to the bottom of whatever the page turned out to be.
+  const footerText = [prescriber.addressLine, prescriber.postalLine, prescriber.email, prescriber.phone]
+    .filter(Boolean)
+    .join(" | ");
+  if (draw) {
+    const footerRuleY = pageHeight - PAGE.margin - 40;
+    ctx.beginPath();
+    ctx.moveTo(left, footerRuleY);
+    ctx.lineTo(right, footerRuleY);
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = "#000";
+    ctx.stroke();
+    ctx.font = `400 17px ${serif}`;
+    ctx.textAlign = "center";
+    let fy = footerRuleY + 24;
+    for (const line of wrapText(ctx, footerText, width)) {
+      ctx.fillText(line, centre, fy);
+      fy += 21;
+    }
+  }
+
+  return { bodyBottom, signatureHeight, contentBottom: y };
+}
+
+/**
+ * Render the script to an image.
+ *
+ * Measured first, then drawn. A script with enough medicines to fill the page
+ * used to have its signature block clamped upward to keep it above the footer,
+ * which stamped the signature across the last medicines — on a document that
+ * gets signed and dispensed. The page now extends instead, so the layout can
+ * always be honoured.
+ */
+export async function scriptToCanvas({ patient, prescription }) {
+  const prescriber = await store.getPrescriber();
+
+  let signature = null;
   if (prescriber.signatureImage) {
     try {
       const img = await loadImage(prescriber.signatureImage);
-      const h = Math.min(90, img.height);
-      const w = (img.width / img.height) * h;
-      ctx.drawImage(img, left, y, w, h);
-      y += h;
+      const height = Math.min(90, img.height);
+      signature = { img, height, width: (img.width / img.height) * height };
     } catch {
       /* a broken signature must not stop the script rendering */
     }
   }
 
-  y += 46;
-  ctx.beginPath();
-  ctx.moveTo(left, y);
-  ctx.lineTo(left + 360, y);
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-  y += 6;
-  write("Signature", { size: 20 });
+  const probe = document.createElement("canvas").getContext("2d");
+  const measured = layoutScript(probe, {
+    prescriber, patient, prescription, signature, pageHeight: PAGE.h, draw: false,
+  });
 
-  const footerText = [prescriber.addressLine, prescriber.postalLine, prescriber.email, prescriber.phone]
-    .filter(Boolean)
-    .join(" | ");
-  ctx.beginPath();
-  ctx.moveTo(left, footerY - 40);
-  ctx.lineTo(right, footerY - 40);
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-  ctx.font = `400 17px ${serif}`;
-  ctx.textAlign = "center";
-  const footerLines = wrapText(ctx, footerText, width);
-  let fy = footerY - 40 + 24;
-  for (const line of footerLines) {
-    ctx.fillText(line, centre, fy);
-    fy += 21;
-  }
+  const needed = measured.bodyBottom + SIGNATURE_GAP + measured.signatureHeight + FOOTER_ZONE;
+  const pageHeight = Math.max(PAGE.h, Math.ceil(needed));
 
-  return new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+  const canvas = document.createElement("canvas");
+  canvas.width = PAGE.w;
+  canvas.height = pageHeight;
+  layoutScript(canvas.getContext("2d"), {
+    prescriber, patient, prescription, signature, pageHeight, draw: true,
+  });
+
+  return canvas;
+}
+
+export async function scriptToBlob({ patient, prescription, type = "image/png", quality } = {}) {
+  const canvas = await scriptToCanvas({ patient, prescription });
+  return new Promise((resolve) => canvas.toBlob(resolve, type, quality));
+}
+
+/** A true PDF, paginated onto A4 sheets when the script runs long. */
+export async function scriptToPdf({ patient, prescription }) {
+  const canvas = await scriptToCanvas({ patient, prescription });
+  const { canvasToPdf } = await import("./pdf.js");
+  return canvasToPdf(canvas);
+}
+
+export async function shareScriptPdf({ patient, prescription }) {
+  const blob = await scriptToPdf({ patient, prescription });
+  return shareBlob({
+    blob,
+    filename: documentFilename({ prefix: "Rx", patient, date: prescription.issuedAt, extension: "pdf" }),
+    title: `Prescription — ${store.patientName(patient)}`,
+  });
 }
 
 function loadImage(src) {

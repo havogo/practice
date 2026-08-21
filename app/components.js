@@ -419,6 +419,92 @@ export async function pickMedicine({ prefillCondition = null, onPick = null } = 
   });
 }
 
+/**
+ * Everything this patient has ever been prescribed, as a checklist.
+ *
+ * Repeating the last script covers the common case; this covers the other one —
+ * a patient on several long-term medicines whose current script is assembled
+ * from a few of them rather than all. Resolves to an array of chosen entries.
+ */
+export async function pickPastMedicines({ patientId, alreadyOn = [] }) {
+  const history = await store.patientDrugHistory(patientId);
+  const taken = new Set(alreadyOn.map((n) => String(n || "").trim().toLowerCase()));
+
+  const rows = [...history.entries()]
+    .map(([key, entry]) => ({ key, ...entry }))
+    .sort((a, b) => b.lastAt.localeCompare(a.lastAt) || b.count - a.count);
+
+  if (!rows.length) {
+    return sheet({
+      title: "Past medicines",
+      body: html`
+        <div class="empty">
+          <div class="empty__title">Nothing on file yet</div>
+          <p class="empty__text">
+            Once you have issued this patient a script, everything on it shows up here to
+            tick and re-use.
+          </p>
+        </div>
+      `,
+    }).then(() => []);
+  }
+
+  return sheet({
+    title: "Past medicines",
+    body: html`
+      <p class="small muted" style="margin-bottom:12px">
+        Everything this patient has been prescribed. Tick what belongs on the new script.
+      </p>
+      <div class="card">
+        <ul class="list">
+          ${rows.map((row) => {
+            const on = taken.has(row.key);
+            const detail = [row.strength, row.dose, row.frequency].filter(Boolean).join(" ");
+            return html`
+              <li>
+                <label class="list__item" style="cursor:pointer">
+                  <input type="checkbox" data-med="${row.key}" ${on ? "disabled" : ""}
+                    style="width:22px;height:22px;flex-shrink:0;margin-right:4px">
+                  <div class="list__body">
+                    <div class="list__title">${row.name || row.key}</div>
+                    <div class="list__meta">
+                      ${detail || "no dose recorded"}
+                      ${on ? " · already on this script" : ""}
+                    </div>
+                  </div>
+                  <div class="list__trail">
+                    ${row.count === 1 ? "once" : `${row.count}×`}<br>
+                    <span class="small muted">${formatDate(row.lastAt, { month: "short", day: "numeric" })}</span>
+                  </div>
+                </label>
+              </li>
+            `;
+          })}
+        </ul>
+      </div>
+      <button class="btn btn--primary btn--block" data-pm-add disabled style="margin-top:16px">
+        Add to script
+      </button>
+    `,
+    onMount(root, close) {
+      const button = root.querySelector("[data-pm-add]");
+      const boxes = [...root.querySelectorAll("[data-med]")];
+
+      const refresh = () => {
+        const n = boxes.filter((b) => b.checked).length;
+        button.disabled = n === 0;
+        button.textContent = n === 0 ? "Add to script" : `Add ${n} to script`;
+      };
+      boxes.forEach((b) => b.addEventListener("change", refresh));
+
+      button.addEventListener("click", () => {
+        const chosen = boxes.filter((b) => b.checked).map((b) => b.dataset.med);
+        close(rows.filter((r) => chosen.includes(r.key)));
+      });
+    },
+  }).then((result) => result || []);
+}
+
 /** `action` is { label, nav } to navigate, or { label, act } to be handled locally. */
 export function emptyState({ iconName = "note", title, text, action = null }) {
   return html`

@@ -22,32 +22,40 @@ import { icon } from "./icons.js";
  * The three buttons. `layout: "row"` is the full-width version for a document
  * screen; "stack" is for inside a sheet.
  */
-export function actionButtons({ layout = "row" } = {}) {
-  const share = html`
-    <button class="btn btn--primary" data-act="doc-share">
-      ${icon("share")} Share
-      <span class="small" style="opacity:.75;font-weight:400">image</span>
+export function actionButtons({ layout = "row", preview = true } = {}) {
+  const sharePdf = html`
+    <button class="btn btn--primary" data-act="doc-share-pdf">
+      ${icon("share")} Share PDF
+    </button>`;
+  const shareImage = html`
+    <button class="btn btn--outline" data-act="doc-share">
+      ${icon("share")} Share image
     </button>`;
   const print = html`
-    <button class="btn btn--outline" data-act="doc-print">
-      ${icon("print")} PDF / Print
-    </button>`;
+    <button class="btn btn--ghost" data-act="doc-print">${icon("print")} Print</button>`;
   const copy = html`
-    <button class="btn btn--ghost" data-act="doc-copy">
-      ${icon("copy")} Copy text
+    <button class="btn btn--ghost" data-act="doc-copy">${icon("copy")} Copy text</button>`;
+  const preview_ = html`
+    <button class="btn btn--secondary btn--block" data-act="doc-preview">
+      ${icon("search")} Preview it
     </button>`;
 
   if (layout === "stack") {
-    return html`<div class="stack">${share}${print}${copy}</div>`;
+    return html`<div class="stack">
+      ${preview ? preview_ : ""}${sharePdf}${shareImage}${print}${copy}
+    </div>`;
   }
   return html`
-    <div class="btn-row btn-row--split">${share}${print}</div>
-    ${copy}
+    ${preview ? html`${preview_}<div style="height:8px"></div>` : ""}
+    <div class="btn-row btn-row--split">${sharePdf}${shareImage}</div>
+    <div class="btn-row btn-row--split">${print}${copy}</div>
   `;
 }
 
+const DOC_ACTIONS = ["doc-share", "doc-share-pdf", "doc-print", "doc-copy", "doc-preview"];
+
 /** True when this act belongs to this module. */
-export const isDocAction = (act) => act === "doc-share" || act === "doc-print" || act === "doc-copy";
+export const isDocAction = (act) => DOC_ACTIONS.includes(act);
 
 /**
  * Run one of the three. `kind` is "prescription" or "certificate"; `record` is
@@ -64,23 +72,35 @@ export async function runDocAction(act, { kind, patient, record }) {
     kind === "certificate"
       ? await import("./certificate.js").then((m) => ({
           share: () => m.shareCertificate({ patient, certificate: record }),
+          sharePdf: () => m.shareCertificatePdf({ patient, certificate: record }),
           print: () => m.printCertificate({ patient, certificate: record }),
           text: () => m.certificateToText({ patient, certificate: record }),
+          canvas: () => m.certificateToCanvas({ patient, certificate: record }),
           label: "Certificate",
         }))
       : await import("./script.js").then((m) => ({
           share: () => m.shareScript({ patient, prescription: record }),
+          sharePdf: () => m.shareScriptPdf({ patient, prescription: record }),
           print: () => m.printScript({ patient, prescription: record }),
           text: () => m.scriptToText({ patient, prescription: record }),
+          canvas: () => m.scriptToCanvas({ patient, prescription: record }),
           label: "Prescription",
         }));
 
+  const reportShare = ({ outcome }, what) => {
+    if (outcome === "shared") toast("Shared", "ok");
+    else if (outcome === "downloaded") toast(`Saved as a ${what} — attach it to your message`, "ok");
+    // "cancelled" says nothing: the sheet was dismissed on purpose.
+  };
+
   try {
-    if (act === "doc-share") {
-      const { outcome } = await modules.share();
-      if (outcome === "shared") toast("Shared", "ok");
-      else if (outcome === "downloaded") toast("Saved as an image — attach it to your message", "ok");
-      // "cancelled" says nothing: the user dismissed the sheet on purpose.
+    if (act === "doc-preview") {
+      await previewDocument(modules, { kind, patient, record });
+    } else if (act === "doc-share") {
+      reportShare(await modules.share(), "image");
+    } else if (act === "doc-share-pdf") {
+      toast("Making the PDF…");
+      reportShare(await modules.sharePdf(), "PDF");
     } else if (act === "doc-print") {
       await modules.print();
     } else if (act === "doc-copy") {
@@ -93,6 +113,40 @@ export async function runDocAction(act, { kind, patient, record }) {
     toast(String(err?.message || err), "error");
   }
   return true;
+}
+
+/**
+ * Show the document exactly as it will be sent.
+ *
+ * The preview is the same canvas render the share and PDF paths use, not a
+ * second approximation of it — so what is checked here is what goes out.
+ */
+async function previewDocument(modules, { kind, patient, record }) {
+  const { sheet } = await import("./components.js");
+  const canvas = await modules.canvas();
+  const url = canvas.toDataURL("image/jpeg", 0.85);
+
+  await sheet({
+    title: kind === "certificate" ? "Certificate preview" : "Prescription preview",
+    body: html`
+      <img src="${url}" alt="The document as it will be sent"
+        style="width:100%;display:block;border:1px solid var(--line);border-radius:8px;background:#fff">
+      <p class="small muted" style="margin-top:12px">
+        This is exactly what is shared or printed${
+          canvas.height > 1754 ? ", across more than one page" : ""
+        }.
+      </p>
+      <div style="margin-top:16px">${actionButtons({ layout: "stack", preview: false })}</div>
+    `,
+    onMount(root, close) {
+      root.addEventListener("click", async (event) => {
+        const el = event.target.closest("[data-act]");
+        if (!el) return;
+        close(null);
+        await runDocAction(el.dataset.act, { kind, patient, record });
+      });
+    },
+  });
 }
 
 /**
