@@ -22,6 +22,8 @@ export async function view(ctx) {
     store.patients.all(), store.prescriptions.all(), store.encounters.all(), store.invoices.all(),
   ]).then(([a, b, c, d]) => ({ patients: a.length, prescriptions: b.length, notes: c.length, invoices: d.length }));
 
+  const backupState = await backup.backupStatus();
+
   const installed = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
 
   return {
@@ -81,8 +83,17 @@ export async function view(ctx) {
           </button>
           <input type="file" id="restore-file" accept="application/json,.json" class="hidden">
         </div>
-        <p class="small muted" style="margin-top:8px">
-          Export writes one JSON file with everything. Save it to iCloud Drive and it survives a lost phone.
+        <p class="small ${backupState.never && backupState.records ? "" : "muted"}"
+          style="margin-top:8px;${backupState.never && backupState.records ? "color:var(--danger-500);font-weight:550" : ""}">
+          ${backupState.never
+            ? backupState.records
+              ? "Never backed up. Everything is on this device only."
+              : "Export writes one JSON file with everything."
+            : `Last backed up ${backupState.days === 0 ? "today" : plural(backupState.days, "day")} ago.`}
+        </p>
+        <p class="small muted" style="margin-top:4px">
+          Save it to iCloud Drive and it survives a lost phone, a cleared cache, or the app being
+          removed from the Home Screen — which deletes the database along with the icon.
         </p>
       </div>
 

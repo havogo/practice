@@ -5,6 +5,7 @@
 // simplest way to move everything to a new phone.
 
 import * as db from "./db.js";
+import * as store from "./store.js";
 import { isoDate } from "./ui.js";
 
 const BACKUP_STORES = [
@@ -32,6 +33,37 @@ export function backupFilename(backup) {
   return `practice-backup-${isoDate(backup.exportedAt)}.json`;
 }
 
+/**
+ * When a backup was last taken, and how many records it held.
+ *
+ * Kept so the app can say how exposed you are. This lives in the same database
+ * as everything else, so it is not itself a safeguard — it exists to make the
+ * absence of a real, off-device backup visible before it matters.
+ */
+export async function backupStatus() {
+  const [record, counts] = await Promise.all([
+    store.getSetting("backup.lastAt", null),
+    Promise.all([
+      store.patients.all(), store.prescriptions.all(),
+      store.encounters.all(), store.certificates.all(),
+    ]).then((sets) => sets.reduce((n, s) => n + s.length, 0)),
+  ]);
+
+  const days = record ? Math.floor((Date.now() - new Date(record).getTime()) / 86400000) : null;
+  return {
+    lastAt: record,
+    days,
+    records: counts,
+    // Nothing worth losing yet is not the same as being safe.
+    atRisk: counts > 0 && (record === null || days >= 14),
+    never: record === null,
+  };
+}
+
+async function recordBackup(backup) {
+  await store.setSetting("backup.lastAt", backup.exportedAt);
+}
+
 /** Offer the backup to the OS: share sheet on iOS, download elsewhere. */
 export async function exportBackup() {
   const backup = await buildBackup();
@@ -43,8 +75,11 @@ export async function exportBackup() {
   if (navigator.canShare?.({ files: [file] })) {
     try {
       await navigator.share({ files: [file], title: "Practice backup" });
+      await recordBackup(backup);
       return { method: "share", counts: backup.counts };
     } catch (err) {
+      // Dismissing the share sheet means no file was saved anywhere, so this
+      // must not count as a backup having been taken.
       if (err?.name === "AbortError") return { method: "cancelled", counts: backup.counts };
     }
   }
@@ -55,6 +90,7 @@ export async function exportBackup() {
   a.download = name;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 4000);
+  await recordBackup(backup);
   return { method: "download", counts: backup.counts };
 }
 
