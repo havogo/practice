@@ -218,10 +218,52 @@ async function boot() {
     console.info("[sw] disabled for this session (?nosw)");
   } else if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
     const swUrl = new URL("../sw.js", import.meta.url);
-    navigator.serviceWorker.register(swUrl, { scope: "./" }).catch((err) => {
-      console.warn("[sw] registration failed", err);
-    });
+    navigator.serviceWorker
+      .register(swUrl, { scope: "./" })
+      .then(watchForUpdate)
+      .catch((err) => console.warn("[sw] registration failed", err));
   }
+}
+
+/**
+ * A new version installs in the background and deliberately waits rather than
+ * taking over a running app. Since it waits, something has to say so — an
+ * update that only lands "sometime after you next close it" is one nobody can
+ * tell has arrived.
+ *
+ * Applying it does a full reload, so the page and its modules always come from
+ * the same version.
+ */
+function watchForUpdate(registration) {
+  if (!registration) return;
+
+  const announce = () => {
+    if (!registration.waiting || !navigator.serviceWorker.controller) return;
+    if ($("#update-bar")) return;
+
+    const bar = document.createElement("div");
+    bar.id = "update-bar";
+    bar.className = "update-bar";
+    mount(bar, html`
+      <span>An update is ready.</span>
+      <button class="btn btn--sm" data-update>Reload</button>
+    `);
+    document.body.appendChild(bar);
+
+    bar.querySelector("[data-update]").addEventListener("click", () => {
+      // Reload once the new worker is in charge, so nothing is half-updated.
+      navigator.serviceWorker.addEventListener("controllerchange", () => window.location.reload(), { once: true });
+      registration.waiting?.postMessage("skipWaiting");
+    });
+  };
+
+  if (registration.waiting) announce();
+  registration.addEventListener("updatefound", () => {
+    const next = registration.installing;
+    next?.addEventListener("statechange", () => {
+      if (next.state === "installed") announce();
+    });
+  });
 }
 
 boot();
