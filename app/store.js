@@ -177,6 +177,87 @@ export async function recordMedicineUsage(items = []) {
   }
 }
 
+/**
+ * When each patient was last dealt with, and how much is on file for them.
+ *
+ * Derived from the records themselves rather than stamped on the patient when
+ * you open them: writing on every view would churn `updatedAt` and push a row
+ * to sync for merely looking at someone. Everything here is already local, so
+ * it costs one pass over data the app has anyway and works offline.
+ */
+export async function patientActivity() {
+  const [scripts, notes, bills, certs, people] = await Promise.all([
+    prescriptions.all(), encounters.all(), invoices.all(), certificates.all(), patients.all(),
+  ]);
+
+  const activity = new Map();
+
+  /**
+   * Two timestamps, because they answer different questions.
+   *   lastAt     – anything at all, including editing the record. Orders the
+   *                "Recent" list, where having just looked someone up is
+   *                exactly what makes them recent.
+   *   lastSeenAt – clinical contact only. Answers "seen this week", which
+   *                correcting a phone number plainly is not.
+   */
+  const touch = (patientId, when, kind, { clinical = false } = {}) => {
+    if (!patientId || !when) return;
+    const date = String(when).slice(0, 10);
+    const entry = activity.get(patientId) || { lastAt: "", lastSeenAt: "", counts: {} };
+    if (date > entry.lastAt) entry.lastAt = date;
+    if (clinical && date > entry.lastSeenAt) entry.lastSeenAt = date;
+    entry.counts[kind] = (entry.counts[kind] || 0) + 1;
+    activity.set(patientId, entry);
+  };
+
+  for (const r of scripts) touch(r.patientId, r.issuedAt || r.updatedAt, "prescriptions", { clinical: true });
+  for (const r of notes) touch(r.patientId, r.date || r.updatedAt, "notes", { clinical: true });
+  for (const r of certs) touch(r.patientId, r.date || r.updatedAt, "certificates", { clinical: true });
+  // Billing is administrative — raising an invoice is not seeing someone.
+  for (const r of bills) touch(r.patientId, r.date || r.updatedAt, "invoices");
+  // A patient with nothing on file yet is still recently touched.
+  for (const p of people) touch(p.id, p.updatedAt, "patient");
+
+  return activity;
+}
+
+/** Patient ids with clinical contact since `since` (an ISO date), newest first. */
+export function seenSince(activity, since) {
+  return [...activity.entries()]
+    .filter(([, entry]) => entry.lastSeenAt && entry.lastSeenAt >= since)
+    .sort((a, b) => b[1].lastSeenAt.localeCompare(a[1].lastSeenAt))
+    .map(([id]) => id);
+}
+
+/**
+ * What this patient has actually been given before, keyed by medicine name.
+ * Powers the "you usually write …" hint, which is only worth showing when it
+ * is this patient's own history rather than a general average.
+ */
+export async function patientDrugHistory(patientId) {
+  if (!patientId) return new Map();
+  const scripts = await prescriptions.byPatient(patientId);
+  const history = new Map();
+
+  for (const script of scripts) {
+    for (const item of script.items || []) {
+      const key = String(item.name || "").trim().toLowerCase();
+      if (!key) continue;
+      const when = script.issuedAt || script.updatedAt || "";
+      const entry = history.get(key) || { count: 0, lastAt: "", strength: "", frequency: "", dose: "" };
+      entry.count += 1;
+      if (String(when) >= entry.lastAt) {
+        entry.lastAt = String(when);
+        entry.strength = item.strength || entry.strength;
+        entry.frequency = item.frequency || entry.frequency;
+        entry.dose = item.dose || entry.dose;
+      }
+      history.set(key, entry);
+    }
+  }
+  return history;
+}
+
 export const CERTIFICATE_TYPES = {
   "sick-leave": "Medical certificate — sick leave",
   "fitness-to-work": "Certificate of fitness to work",
