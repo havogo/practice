@@ -21,6 +21,8 @@ export const icons = {
   search: (o) => svg(`<circle cx="11" cy="11" r="6.4"/><path d="m20 20-4.4-4.4"/>`, o),
   chevronRight: (o) => svg(`<path d="m9 5 7 7-7 7"/>`, o),
   chevronLeft: (o) => svg(`<path d="m15 5-7 7 7 7"/>`, o),
+  chevronUp: (o) => svg(`<path d="m5 15 7-7 7 7"/>`, o),
+  chevronDown: (o) => svg(`<path d="m5 9 7 7 7-7"/>`, o),
   close: (o) => svg(`<path d="M6 6l12 12"/><path d="M18 6 6 18"/>`, o),
   trash: (o) => svg(`<path d="M4 7h16"/><path d="M9.5 7V5.2A1.2 1.2 0 0 1 10.7 4h2.6a1.2 1.2 0 0 1 1.2 1.2V7"/><path d="M6.5 7l.8 12.1a1.2 1.2 0 0 0 1.2 1.1h7a1.2 1.2 0 0 0 1.2-1.1L17.5 7"/>`, o),
   print: (o) => svg(`<path d="M7 9V3h10v6"/><path d="M7 18H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2"/><rect x="7" y="14" width="10" height="7" rx="1"/>`, o),

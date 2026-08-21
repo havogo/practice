@@ -192,13 +192,21 @@ export function quickAddPatient() {
  * Search the formulary by drug name or by indication/condition.
  * Resolves to a formulary entry, or null.
  */
-export async function pickMedicine({ prefillCondition = null } = {}) {
+/**
+ * Search the formulary by drug name or by indication / medical condition.
+ *
+ * With `onPick` the sheet stays open and reports each choice, so a script with
+ * four medicines is one visit rather than four. Without it, the first choice
+ * closes the sheet and resolves.
+ */
+export async function pickMedicine({ prefillCondition = null, onPick = null } = {}) {
   const { drugs, conditions } = await formulary.catalogue();
   let mode = prefillCondition ? "condition" : "drug";
   let activeCondition = prefillCondition;
+  const added = [];
 
   return sheet({
-    title: "Add medicine",
+    title: onPick ? "Add medicines" : "Add medicine",
     body: html`
       <div class="chips" style="margin-bottom:12px">
         <button class="chip" data-mode="drug" aria-pressed="${String(mode === "drug")}">By drug name</button>
@@ -211,13 +219,41 @@ export async function pickMedicine({ prefillCondition = null } = {}) {
       </div>
       <div id="pm-typed"></div>
       <div id="pm-active"></div>
+      <div id="pm-added"></div>
       <div id="pm-results"></div>
+      ${onPick
+        ? html`<button class="btn btn--primary btn--block" data-pm-done
+            style="position:sticky;bottom:0;margin-top:16px">Done</button>`
+        : ""}
     `,
     onMount(root, close) {
       const input = root.querySelector("#pm-q");
       const results = root.querySelector("#pm-results");
       const activeBox = root.querySelector("#pm-active");
       const typedBox = root.querySelector("#pm-typed");
+      const addedBox = root.querySelector("#pm-added");
+
+      /** Take a choice: either hand it back and close, or stay open for more. */
+      const take = (drug) => {
+        if (!drug) return;
+        if (!onPick) return close(drug);
+        onPick(drug);
+        added.push(drug.name);
+        input.value = "";
+        redraw();
+        input.focus();
+        return undefined;
+      };
+
+      const drawAdded = () => {
+        if (!added.length) return mount(addedBox, "");
+        mount(addedBox, html`
+          <div class="alert alert--info" style="margin-bottom:12px">
+            ${icon("check")}
+            <div><b>${added.length === 1 ? "Added" : `${added.length} added`}:</b> ${added.join(", ")}</div>
+          </div>
+        `);
+      };
 
       /**
        * Most scripts here are trade names the reference list has never heard of,
@@ -318,6 +354,7 @@ export async function pickMedicine({ prefillCondition = null } = {}) {
           mode === "drug" ? "Type any medicine name" : "Search conditions, e.g. hypertension";
         drawTyped();
         drawActive();
+        drawAdded();
         if (mode === "condition" && !activeCondition) drawConditions();
         else drawDrugs();
       };
@@ -333,12 +370,16 @@ export async function pickMedicine({ prefillCondition = null } = {}) {
         const typed = input.value.trim();
         if (mode === "condition" || typed.length < 2) return;
         const exact = drugs.find((d) => d.name.toLowerCase() === typed.toLowerCase());
-        close(exact || formulary.freeTextDrug(typed));
+        take(exact || formulary.freeTextDrug(typed));
       });
 
       root.addEventListener("click", (event) => {
+        if (event.target.closest("[data-pm-done]")) {
+          close(null);
+          return;
+        }
         if (event.target.closest("[data-use-typed]")) {
-          close(formulary.freeTextDrug(input.value.trim()));
+          take(formulary.freeTextDrug(input.value.trim()));
           return;
         }
         const modeBtn = event.target.closest("[data-mode]");
@@ -369,7 +410,7 @@ export async function pickMedicine({ prefillCondition = null } = {}) {
         const drug = event.target.closest("[data-drug-name]");
         if (drug) {
           const wanted = drug.dataset.drugName.toLowerCase();
-          close(drugs.find((d) => d.name.toLowerCase() === wanted) || null);
+          take(drugs.find((d) => d.name.toLowerCase() === wanted) || null);
         }
       });
 

@@ -69,18 +69,7 @@ export async function view(ctx) {
               </div>
             </div>
           </div>
-          <div class="switch-row">
-            <div>
-              <div class="switch-row__label">
-                ${storageState.usage ? `${(storageState.usage / MB).toFixed(1)} MB used` : "Storage"}
-              </div>
-              <div class="switch-row__hint">
-                ${storageState.persisted
-                  ? "Durable — the browser will not evict this data"
-                  : "Not yet durable — install to the Home Screen"}
-              </div>
-            </div>
-          </div>
+          ${storageRow({ installed, storageState })}
         </div>
 
         <div class="stack" style="margin-top:12px">
@@ -253,6 +242,69 @@ export async function view(ctx) {
       });
     },
   };
+}
+
+/**
+ * Where the records are and how safe they are.
+ *
+ * Two separate facts that are easy to conflate: whether the app is installed,
+ * and whether the browser has actually granted durable storage. Installing is
+ * what usually earns the grant, but they are not the same thing, so both are
+ * stated rather than one being inferred from the other.
+ */
+function storageRow({ installed, storageState }) {
+  const { usage = 0, quota = 0, persisted } = storageState;
+  const usedMb = usage / MB;
+  const quotaMb = quota / MB;
+  const pct = quota ? Math.min(100, (usage / quota) * 100) : 0;
+
+  // The badge carries where the app is running; the label carries what that
+  // means for the records. Saying both in both places just reads as a stutter.
+  const state = persisted
+    ? { label: "Records are safe here", tone: "ok",
+        hint: "The browser has granted durable storage — it will not clear these records to reclaim space." }
+    : installed
+      ? { label: "Awaiting durable storage", tone: "warn",
+          hint: "Usually granted after a launch or two. Keep exporting backups until it is." }
+      : { label: "Records are not yet protected", tone: "danger",
+          hint: "iOS may clear them after a stretch of disuse. Add the app to your Home Screen — Share, then Add to Home Screen." };
+
+  return html`
+    <div class="switch-row">
+      <div class="grow">
+        <div class="switch-row__label">
+          ${state.label}
+          <span class="badge badge--${state.tone}" style="margin-left:6px">
+            ${installed ? "Installed" : "Browser tab"}
+          </span>
+        </div>
+        <div class="switch-row__hint">${state.hint}</div>
+      </div>
+    </div>
+
+    ${quota
+      ? html`
+        <div class="switch-row">
+          <div class="grow">
+            <div class="switch-row__label tabular">
+              ${usedMb < 1 ? `${Math.round(usage / 1024)} KB` : `${usedMb.toFixed(1)} MB`} used
+              <span class="muted" style="font-weight:400">
+                of ${quotaMb > 1024 ? `${(quotaMb / 1024).toFixed(1)} GB` : `${Math.round(quotaMb)} MB`} available
+              </span>
+            </div>
+            <div style="height:6px;border-radius:999px;background:var(--surface-sunk);margin-top:8px;overflow:hidden">
+              <div style="height:100%;width:${Math.max(pct, usage ? 1.5 : 0)}%;
+                background:${pct > 85 ? "var(--danger-500)" : "var(--brand-500)"}"></div>
+            </div>
+            <div class="switch-row__hint" style="margin-top:6px">
+              ${pct < 1
+                ? "Nowhere near the limit — a decade of records is a few megabytes."
+                : `${pct.toFixed(1)}% of what this browser will give the app.`}
+            </div>
+          </div>
+        </div>`
+      : ""}
+  `;
 }
 
 function editPrescriber(prescriber) {

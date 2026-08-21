@@ -4,7 +4,8 @@ import { html, mount, toast, confirmDialog, isoDate, plural, debounce } from "..
 import { icon } from "../icons.js";
 import * as store from "../store.js";
 import * as router from "../router.js";
-import { statement, printCertificate, shareCertificate } from "../certificate.js";
+import { statement } from "../certificate.js";
+import { actionButtons, isDocAction, runDocAction } from "../docactions.js";
 
 export async function view(ctx) {
   const certificate = await store.certificates.get(ctx.params.id);
@@ -60,13 +61,9 @@ export async function view(ctx) {
           await persist();
           toast("Certificate saved", "ok");
           router.go(patient ? `/patients/${patient.id}` : "/patients");
-        } else if (act === "print") {
+        } else if (isDocAction(act)) {
           await persist();
-          await printCertificate({ patient, certificate: draft });
-        } else if (act === "share") {
-          await persist();
-          const result = await shareCertificate({ patient, certificate: draft });
-          if (result.downloaded) toast("Saved as an image — attach it to your message", "ok");
+          await runDocAction(act, { kind: "certificate", patient, record: draft });
         } else if (act === "issue") {
           draft.status = "issued";
           await persist();
@@ -207,9 +204,25 @@ function body(draft, patient) {
           <input class="input" data-f="employerRef" value="${draft.employerRef || ""}">
         </label>
         <label class="field" style="margin-bottom:0">
-          <span class="field__label">Remarks <span class="muted">optional</span></span>
+          <span class="field__label">Remarks <span class="muted">printed</span></span>
           <textarea class="textarea" data-f="remarks" style="min-height:70px"
             placeholder="To be reviewed if not improving">${draft.remarks || ""}</textarea>
+          <span class="field__hint">This appears on the certificate the patient receives.</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section__head"><span class="section__title">Your own note</span></div>
+      <div class="card card--pad">
+        <label class="field" style="margin-bottom:0">
+          <span class="field__label">Clinical note <span class="muted">not printed</span></span>
+          <textarea class="textarea" data-f="clinicalNote" style="min-height:80px"
+            placeholder="Third certificate in two months — review pattern">${draft.clinicalNote || ""}</textarea>
+          <span class="field__hint">
+            Kept on the record for you. It is not on the printed certificate and not in the
+            shared image.
+          </span>
         </label>
       </div>
     </div>
@@ -224,10 +237,10 @@ function body(draft, patient) {
     </div>
 
     <div class="section stack">
-      <div class="btn-row btn-row--split">
-        <button class="btn btn--outline" data-act="print">${icon("print")} Print / PDF</button>
-        <button class="btn btn--outline" data-act="share">${icon("share")} Share</button>
+      <div class="section__head" style="margin:0">
+        <span class="section__title">Send it</span>
       </div>
+      ${actionButtons()}
       ${draft.status === "issued"
         ? html`<p class="small muted" style="text-align:center">
             ${icon("check", { size: 14 })} Issued

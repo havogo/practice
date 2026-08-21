@@ -266,39 +266,62 @@ function loadImage(src) {
   });
 }
 
+/**
+ * A filename a pharmacist can read at a glance in a WhatsApp thread, rather
+ * than the slug-with-hyphens a download would otherwise get. Only the
+ * characters a filesystem genuinely objects to are stripped.
+ */
+export function documentFilename({ prefix, patient, date, extension = "png" }) {
+  const name = store.patientName(patient).replace(/[\\/:*?"<>|]+/g, "").trim();
+  return `${prefix} – ${name} – ${date}.${extension}`;
+}
+
 export function scriptFilename({ patient, prescription }) {
-  const name = store.patientName(patient).replace(/[^\w]+/g, "-").replace(/^-|-$/g, "");
-  return `Rx-${name}-${prescription.issuedAt}.png`;
+  return documentFilename({ prefix: "Rx", patient, date: prescription.issuedAt });
 }
 
 /**
- * Hand the script to the operating system. Falls back to a download when the
- * browser cannot share files (desktop Safari, Firefox).
+ * Hand the script to the operating system as an image.
+ *
+ * An image rather than a PDF is deliberate: WhatsApp on iOS reliably accepts a
+ * PNG through the share sheet and is inconsistent with PDFs, and WhatsApp is
+ * how a script actually reaches a pharmacy here. The PDF path is the print
+ * dialog, offered separately.
+ *
+ * Resolves to { outcome } — "shared", "cancelled", "downloaded" — so the caller
+ * can say something accurate rather than guessing.
  */
 export async function shareScript({ patient, prescription }) {
   const blob = await scriptToBlob({ patient, prescription });
-  const file = new File([blob], scriptFilename({ patient, prescription }), { type: "image/png" });
+  return shareBlob({
+    blob,
+    filename: scriptFilename({ patient, prescription }),
+    title: `Prescription — ${store.patientName(patient)}`,
+  });
+}
+
+/** Shared by prescriptions and certificates. */
+export async function shareBlob({ blob, filename, title }) {
+  const file = new File([blob], filename, { type: blob.type || "image/png" });
 
   if (navigator.canShare?.({ files: [file] })) {
     try {
-      await navigator.share({
-        files: [file],
-        title: `Prescription — ${store.patientName(patient)}`,
-      });
-      return { shared: true };
+      await navigator.share({ files: [file], title });
+      return { outcome: "shared" };
     } catch (err) {
-      if (err?.name === "AbortError") return { shared: false, cancelled: true };
-      // fall through to download
+      // A dismissed share sheet is a decision, not a failure — do not then
+      // dump a file into Downloads that was never asked for.
+      if (err?.name === "AbortError") return { outcome: "cancelled" };
     }
   }
 
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = file.name;
+  a.download = filename;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 4000);
-  return { shared: false, downloaded: true };
+  return { outcome: "downloaded" };
 }
 
 /** Plain-text version, handy for pasting into a message. */

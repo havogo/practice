@@ -8,7 +8,7 @@
 
 import { html, mount, formatDate, ageFrom, $ } from "./ui.js";
 import * as store from "./store.js";
-import { letterhead, letterFooter, signatureBlock } from "./script.js";
+import { letterhead, letterFooter, signatureBlock, shareBlob, documentFilename } from "./script.js";
 
 const CAPACITY_WORDING = {
   unfit: "unfit to attend work or school",
@@ -267,23 +267,36 @@ export async function certificateToBlob({ patient, certificate }) {
 
 export async function shareCertificate({ patient, certificate }) {
   const blob = await certificateToBlob({ patient, certificate });
-  const name = `Certificate-${store.patientName(patient).replace(/[^\w]+/g, "-")}-${certificate.date}.png`;
-  const file = new File([blob], name, { type: "image/png" });
+  return shareBlob({
+    blob,
+    filename: documentFilename({ prefix: "Certificate", patient, date: certificate.date }),
+    title: `Medical certificate — ${store.patientName(patient)}`,
+  });
+}
 
-  if (navigator.canShare?.({ files: [file] })) {
-    try {
-      await navigator.share({ files: [file], title: `Medical certificate — ${store.patientName(patient)}` });
-      return { shared: true };
-    } catch (err) {
-      if (err?.name === "AbortError") return { shared: false, cancelled: true };
-    }
-  }
-
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 4000);
-  return { shared: false, downloaded: true };
+/**
+ * Plain text, for pasting into a message.
+ *
+ * `clinicalNote` is deliberately absent, as it is from the printed page and the
+ * shared image — it is the practitioner's own record, not the patient's copy.
+ */
+export async function certificateToText({ patient, certificate }) {
+  const prescriber = await store.getPrescriber();
+  return [
+    prescriber.name,
+    prescriber.qualifications,
+    prescriber.hpcsa ? `HPCSA: ${prescriber.hpcsa}` : null,
+    "",
+    TITLE[certificate.type] || TITLE["sick-leave"],
+    "",
+    `Patient: ${store.patientName(patient)}`,
+    patient?.dob ? `Date of birth: ${patient.dob}` : null,
+    certificate.employerRef ? `Employee number: ${certificate.employerRef}` : null,
+    "",
+    statement(certificate, patient),
+    certificate.remarks ? `\nRemarks: ${certificate.remarks}` : null,
+    "",
+    formatDate(certificate.date) || certificate.date,
+    prescriber.name,
+  ].filter((line) => line !== null).join("\n");
 }

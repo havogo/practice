@@ -284,7 +284,12 @@ export function newCertificate(seed = {}) {
     fromDate: isoDate(),
     toDate: isoDate(),
     employerRef: "",
+    // Printed on the certificate the patient walks out with.
     remarks: "",
+    // Never printed. Your own record of why this certificate was issued —
+    // kept on the record, visible in the app, absent from both the printed
+    // page and the shared image. See app/certificate.js.
+    clinicalNote: "",
     status: "draft",
     ...seed,
   };

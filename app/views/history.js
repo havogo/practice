@@ -26,6 +26,21 @@ export async function view() {
     mount(root) {
       const input = root.querySelector("#h-q");
       const target = root.querySelector("#h-list");
+      // Re-sending an old script is common — a pharmacy lost it, or the patient
+      // wants it again — so it should not need opening the script first.
+      root.addEventListener("action", async ({ detail: { act, el } }) => {
+        if (act !== "send") return;
+        const script = scripts.find((s) => s.id === el.dataset.id);
+        if (!script) return;
+        const { documentActionSheet } = await import("../docactions.js");
+        await documentActionSheet({
+          kind: "prescription",
+          patient: byId.get(script.patientId),
+          record: script,
+          title: store.patientName(byId.get(script.patientId)),
+        });
+      });
+
       input?.addEventListener("input", debounce(() => {
         const q = input.value.trim().toLowerCase();
         const rows = q
@@ -74,18 +89,29 @@ function list(scripts, byId, { searching = false } = {}) {
             ${rows.map((s) => {
               const patient = byId.get(s.patientId);
               return html`
-                <li><button class="list__item" data-nav="/prescribe/${s.id}">
-                  <div class="avatar">${initials(store.patientName(patient))}</div>
-                  <div class="list__body">
-                    <div class="list__title">${store.patientName(patient)}</div>
-                    <div class="list__meta">${s.items.map((i) => i.name).join(", ") || "Empty script"}</div>
-                  </div>
-                  <div class="list__trail">
-                    ${s.status === "issued"
-                      ? formatDate(s.issuedAt, { month: "short", day: "numeric", year: undefined })
-                      : html`<span class="badge badge--warn">Draft</span>`}
-                  </div>
-                </button></li>
+                <li class="list__item" style="cursor:default">
+                  <button class="list__item" data-nav="/prescribe/${s.id}"
+                    style="border:0;padding:0;flex:1;min-width:0">
+                    <div class="avatar">${initials(store.patientName(patient))}</div>
+                    <div class="list__body">
+                      <div class="list__title">${store.patientName(patient)}</div>
+                      <div class="list__meta">${s.items.map((i) => i.name).join(", ") || "Empty script"}</div>
+                    </div>
+                    <div class="list__trail">
+                      ${s.status === "issued"
+                        ? formatDate(s.issuedAt, { month: "short", day: "numeric", year: undefined })
+                        : html`<span class="badge badge--warn">Draft</span>`}
+                    </div>
+                  </button>
+                  ${s.items.length
+                    ? html`
+                      <button class="rx-item__remove" data-act="send" data-id="${s.id}"
+                        aria-label="Send this prescription again"
+                        style="padding:8px;color:var(--brand-600)">
+                        ${icon("share", { size: 18 })}
+                      </button>`
+                    : ""}
+                </li>
               `;
             })}
           </ul>

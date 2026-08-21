@@ -4,7 +4,8 @@ import { html, mount, toast, confirmDialog, formatDate, ageFrom, isoDate, initia
 import { icon } from "../icons.js";
 import * as store from "../store.js";
 import { pickPatient, pickMedicine, sheet } from "../components.js";
-import { printScript, shareScript, scriptToText, itemLine } from "../script.js";
+import { itemLine } from "../script.js";
+import { actionButtons, isDocAction, runDocAction } from "../docactions.js";
 import * as router from "../router.js";
 
 export async function view(ctx) {
@@ -40,11 +41,15 @@ export async function view(ctx) {
   let dirty = false;
   const issued = draft.status === "issued";
 
+  // What this patient has had before: drives the "repeat last script" action and
+  // the per-drug dose hints. Reloaded whenever the patient changes.
+  let context = await patientContext(draft.patientId, draft.id);
+
   return {
     title: existingId ? "Prescription" : "New prescription",
     back: existingId ? "/history" : null,
     largeTitle: !existingId,
-    content: html`<div id="rx-root">${renderBody({ draft, patient, issued })}</div>`,
+    content: html`<div id="rx-root">${renderBody({ draft, patient, issued, context })}</div>`,
     mount(root) {
       let patientRef = patient;
       // Redraws replace only the composer, so the shell's large title survives.
@@ -57,7 +62,10 @@ export async function view(ctx) {
       };
 
       function redraw() {
-        mount(canvas, renderBody({ draft, patient: patientRef, issued }));
+        // `dirty` has to be rendered, not just toggled on the live node: a
+        // redraw would otherwise reset "Save draft" to disabled while there
+        // are still unsaved changes.
+        mount(canvas, renderBody({ draft, patient: patientRef, issued, context, dirty }));
         bind();
       }
 
@@ -109,19 +117,48 @@ export async function view(ctx) {
           if (chosen) {
             draft.patientId = chosen.id;
             patientRef = chosen;
+            context = await patientContext(draft.patientId, draft.id);
             markDirty();
             redraw();
           }
         } else if (act === "add-medicine") {
-          const drug = await pickMedicine();
-          if (drug) {
-            const seed = (await import("../formulary.js")).toPrescriptionItem(drug);
-            draft.items.push(store.newPrescriptionItem(seed));
-            markDirty();
+          const { toPrescriptionItem } = await import("../formulary.js");
+          let count = 0;
+          // The sheet stays open, so several medicines are one visit. Items are
+          // appended as they are chosen rather than collected and applied at the
+          // end, so dismissing the sheet never loses what was already picked.
+          await pickMedicine({
+            onPick: (drug) => {
+              draft.items.push(store.newPrescriptionItem(toPrescriptionItem(drug)));
+              count += 1;
+              markDirty();
+            },
+          });
+          if (count) {
             redraw();
             // Put the cursor where the prescriber will type next.
-            const last = canvas.querySelector(".rx-item:last-of-type [data-field='dose']");
-            last?.focus();
+            canvas.querySelector(".rx-item:last-of-type [data-field='dose']")?.focus();
+          }
+        } else if (act === "repeat-last") {
+          if (!context.lastScript) return;
+          draft.items.push(
+            ...context.lastScript.items.map(({ id, ...rest }) => store.newPrescriptionItem(rest))
+          );
+          if (!draft.diagnosis && context.lastScript.diagnosis) {
+            draft.diagnosis = context.lastScript.diagnosis;
+            draft.icd10 = context.lastScript.icd10 || draft.icd10;
+          }
+          markDirty();
+          redraw();
+          toast("Loaded — check it before issuing", "ok");
+        } else if (act === "move-up" || act === "move-down") {
+          const index = draft.items.findIndex((i) => i.id === el.dataset.itemId);
+          const target = act === "move-up" ? index - 1 : index + 1;
+          if (index >= 0 && target >= 0 && target < draft.items.length) {
+            const [moved] = draft.items.splice(index, 1);
+            draft.items.splice(target, 0, moved);
+            markDirty();
+            redraw();
           }
         } else if (act === "remove-item") {
           draft.items = draft.items.filter((i) => i.id !== el.dataset.itemId);
@@ -152,19 +189,15 @@ export async function view(ctx) {
         } else if (act === "issue") {
           const saved = await save({ status: "issued" });
           if (saved) router.go(`/prescribe/${saved.id}`, { replace: true });
-        } else if (act === "print") {
-          if (dirty || !draft.id) await save({ silent: true });
-          if (!draft.patientId || !draft.items.length) return;
-          await printScript({ patient: patientRef, prescription: draft });
-        } else if (act === "share") {
-          if (dirty || !draft.id) await save({ silent: true });
-          if (!draft.patientId || !draft.items.length) return;
-          const result = await shareScript({ patient: patientRef, prescription: draft });
-          if (result.downloaded) toast("Saved as an image — attach it to your message", "ok");
-        } else if (act === "copy-text") {
-          const text = await scriptToText({ patient: patientRef, prescription: draft });
-          await navigator.clipboard.writeText(text);
-          toast("Prescription copied", "ok");
+        } else if (isDocAction(act)) {
+          // Anything leaving the app is saved first, so what was sent is what
+          // the record shows.
+          if (act !== "doc-copy" && (dirty || !draft.id)) await save({ silent: true });
+          if (!draft.patientId || !draft.items.length) {
+            toast(draft.patientId ? "Add at least one medicine" : "Choose a patient first", "error");
+            return;
+          }
+          await runDocAction(act, { kind: "prescription", patient: patientRef, record: draft });
         } else if (act === "duplicate") {
           const copy = store.newPrescription({
             patientId: draft.patientId,
@@ -206,7 +239,43 @@ export async function view(ctx) {
 
 // ---------------------------------------------------------------------------
 
-function renderBody({ draft, patient, issued }) {
+/**
+ * This patient's prescribing history: the most recent issued script (to repeat)
+ * and per-drug dosing (to hint). Excludes the script being edited, so opening
+ * an old one does not offer to repeat itself.
+ */
+async function patientContext(patientId, currentId) {
+  if (!patientId) return { lastScript: null, drugHistory: new Map() };
+  const [scripts, drugHistory] = await Promise.all([
+    store.prescriptions.byPatient(patientId),
+    store.patientDrugHistory(patientId),
+  ]);
+  const lastScript = scripts.find(
+    (s) => s.id !== currentId && s.status === "issued" && (s.items || []).length
+  ) || null;
+  return { lastScript, drugHistory };
+}
+
+/**
+ * "You usually write …" only when it is this patient's own pattern. One prior
+ * script is reported as a fact rather than a habit.
+ */
+function doseHint(item, drugHistory) {
+  const prior = drugHistory.get(String(item.name || "").trim().toLowerCase());
+  if (!prior) return null;
+  const written = [prior.strength, prior.dose, prior.frequency].filter(Boolean).join(" ");
+  if (!written) return null;
+
+  // Nothing to suggest if the line already says exactly that.
+  const current = [item.strength, item.dose, item.frequency].filter(Boolean).join(" ");
+  if (current === written) return null;
+
+  return prior.count > 1
+    ? `You usually write ${written} for this patient`
+    : `Last time: ${written}`;
+}
+
+function renderBody({ draft, patient, issued, context, dirty = false }) {
   return html`
     ${issued ? html`
       <div class="alert alert--info">
@@ -240,7 +309,8 @@ function renderBody({ draft, patient, issued }) {
       </div>
 
       ${draft.items.length
-        ? draft.items.map(itemCard)
+        ? draft.items.map((item, index) =>
+            itemCard(item, index, draft.items.length, context.drugHistory))
         : html`<div class="card card--pad" style="text-align:center">
             <p class="muted small">No medicines on this script yet.</p>
           </div>`}
@@ -248,6 +318,19 @@ function renderBody({ draft, patient, issued }) {
       <button class="btn btn--secondary btn--block" data-act="add-medicine" style="margin-top:12px">
         ${icon("plus", { size: 18 })} Add medicine
       </button>
+
+      ${context.lastScript && !draft.items.length
+        ? html`
+          <button class="btn btn--outline btn--block" data-act="repeat-last" style="margin-top:8px">
+            ${icon("copy", { size: 18 })} Repeat last script
+            <span class="muted small" style="font-weight:400">
+              · ${formatDate(context.lastScript.issuedAt, { month: "short", day: "numeric" })}
+            </span>
+          </button>
+          <p class="small muted" style="margin-top:6px;text-align:center">
+            ${context.lastScript.items.map((i) => i.name).join(", ")}
+          </p>`
+        : ""}
 
       ${!draft.items.length && !draft.id
         ? html`<button class="btn btn--ghost btn--block" data-nav="/import" style="margin-top:8px">
@@ -265,21 +348,25 @@ function renderBody({ draft, patient, issued }) {
     </div>
 
     <div class="section stack">
-      <div class="btn-row btn-row--split">
-        <button class="btn btn--outline" data-act="print">${icon("print")} Print / PDF</button>
-        <button class="btn btn--outline" data-act="share">${icon("share")} Share</button>
-      </div>
       ${draft.status === "issued"
-        ? html`<button class="btn btn--secondary btn--block" data-act="duplicate">
-            ${icon("copy")} Use as template for a new script
-          </button>`
+        ? ""
         : html`<button class="btn btn--primary btn--block" data-act="issue">
             ${icon("check")} Issue prescription
           </button>`}
-      <div class="btn-row btn-row--split">
-        <button class="btn btn--ghost" data-act="save" disabled>Save draft</button>
-        <button class="btn btn--ghost" data-act="copy-text">Copy as text</button>
+
+      <div class="section__head" style="margin:8px 0 0">
+        <span class="section__title">Send it</span>
       </div>
+      ${actionButtons()}
+
+      ${draft.status === "issued"
+        ? html`<button class="btn btn--secondary btn--block" data-act="duplicate" style="margin-top:8px">
+            ${icon("copy")} Use as template for a new script
+          </button>`
+        : html`<button class="btn btn--ghost btn--block" data-act="save" ${dirty ? "" : "disabled"}>
+            Save draft
+          </button>`}
+
       ${draft.id
         ? html`<button class="btn btn--ghost" data-act="delete" style="color:var(--danger-500)">
             ${icon("trash")} Delete prescription
@@ -330,7 +417,8 @@ function patientCard(patient) {
   `;
 }
 
-function itemCard(item) {
+function itemCard(item, index, count, drugHistory) {
+  const hint = doseHint(item, drugHistory);
   return html`
     <div class="rx-item">
       <div class="rx-item__head">
@@ -344,9 +432,22 @@ function itemCard(item) {
               </button>`
             : ""}
         </div>
-        <button class="rx-item__remove" data-act="remove-item" data-item-id="${item.id}" aria-label="Remove ${item.name}">
-          ${icon("close", { size: 18 })}
-        </button>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:2px;flex-shrink:0">
+          ${count > 1
+            ? html`
+              <button class="rx-item__remove" data-act="move-up" data-item-id="${item.id}"
+                aria-label="Move ${item.name} up" ${index === 0 ? "disabled" : ""}
+                style="${index === 0 ? "opacity:.25" : ""}">${icon("chevronUp", { size: 16 })}</button>`
+            : ""}
+          <button class="rx-item__remove" data-act="remove-item" data-item-id="${item.id}"
+            aria-label="Remove ${item.name}">${icon("close", { size: 18 })}</button>
+          ${count > 1
+            ? html`
+              <button class="rx-item__remove" data-act="move-down" data-item-id="${item.id}"
+                aria-label="Move ${item.name} down" ${index === count - 1 ? "disabled" : ""}
+                style="${index === count - 1 ? "opacity:.25" : ""}">${icon("chevronDown", { size: 16 })}</button>`
+            : ""}
+        </div>
       </div>
 
       <div class="field-grid">
@@ -357,6 +458,7 @@ function itemCard(item) {
         <label class="field">
           <span class="field__label">Dose</span>
           <input class="input" data-field="dose" data-item-id="${item.id}" value="${item.dose || ""}" placeholder="1 tablet">
+          ${hint ? html`<span class="field__hint">${hint}</span>` : ""}
         </label>
         <label class="field">
           <span class="field__label">Frequency</span>
