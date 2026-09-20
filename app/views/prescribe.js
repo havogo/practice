@@ -3,8 +3,8 @@
 import { html, mount, toast, confirmDialog, formatDate, ageFrom, isoDate, initials } from "../ui.js";
 import { icon } from "../icons.js";
 import * as store from "../store.js";
-import { pickPatient, pickMedicine, pickPastMedicines, sheet } from "../components.js";
-import { itemLine } from "../script.js";
+import { pickPatient, pickMedicine, pickPastMedicines, pickPharmacy, sheet } from "../components.js";
+import { itemLine, itemSubLine, NO_SUBSTITUTE_LABEL } from "../script.js";
 import { actionButtons, isDocAction, runDocAction } from "../docactions.js";
 import * as router from "../router.js";
 
@@ -70,6 +70,25 @@ export async function view(ctx) {
       }
 
       function bind() {
+        // Checkboxes report through `change`, and carry a boolean rather than
+        // a string, so they cannot share the text-input path.
+        canvas.querySelectorAll("[data-toggle]").forEach((el) => {
+          el.addEventListener("change", () => {
+            const { toggle, itemId } = el.dataset;
+            if (itemId) {
+              const item = draft.items.find((i) => i.id === itemId);
+              if (item) item[toggle] = el.checked;
+            } else {
+              draft[toggle] = el.checked;
+            }
+            markDirty();
+            const preview = canvas.querySelector(`[data-preview="${itemId}"]`);
+            if (preview && itemId) {
+              preview.textContent = printedItem(draft.items.find((i) => i.id === itemId));
+            }
+          });
+        });
+
         // Inputs write straight into the draft, keyed by data-field.
         canvas.querySelectorAll("[data-field]").forEach((el) => {
           el.addEventListener("input", () => {
@@ -80,7 +99,7 @@ export async function view(ctx) {
                 item[field] = el.value;
                 // Keep the line-as-it-will-print in step with the fields above it.
                 const preview = canvas.querySelector(`[data-preview="${itemId}"]`);
-                if (preview) preview.textContent = itemLine(item);
+                if (preview) preview.textContent = printedItem(item);
               }
             } else {
               draft[field] = el.value;
@@ -107,6 +126,7 @@ export async function view(ctx) {
         // Learn the names and doses actually written, so the next script for the
         // same thing is a couple of taps.
         await store.recordMedicineUsage(draft.items);
+        if (status === "issued") await store.recordPharmacyUse(draft.pharmacyId);
         if (!silent) toast(status === "issued" ? "Prescription issued" : "Saved", "ok");
         return saved;
       }
@@ -138,6 +158,18 @@ export async function view(ctx) {
             redraw();
             // Put the cursor where the prescriber will type next.
             canvas.querySelector(".rx-item:last-of-type [data-field='dose']")?.focus();
+          }
+        } else if (act === "pick-pharmacy") {
+          const chosen = await pickPharmacy();
+          if (chosen) {
+            draft.pharmacyId = chosen.id;
+            draft.pharmacyName = chosen.name;
+            draft.pharmacyEmail = chosen.email;
+            // Choosing a pharmacy is the point of the declaration, so it comes
+            // on by default rather than needing a second deliberate tap.
+            draft.declareEmailedOriginal = true;
+            markDirty();
+            redraw();
           }
         } else if (act === "past-medicines") {
           const chosen = await pickPastMedicines({
@@ -365,6 +397,43 @@ function renderBody({ draft, patient, issued, context, dirty = false }) {
     </div>
 
     <div class="section">
+      <div class="section__head"><span class="section__title">Pharmacy</span></div>
+      ${draft.pharmacyEmail
+        ? html`
+          <div class="card">
+            <button class="list__item" data-act="pick-pharmacy" style="width:100%">
+              <div class="avatar">${icon("receipt", { size: 18 })}</div>
+              <div class="list__body">
+                <div class="list__title">${draft.pharmacyName || draft.pharmacyEmail}</div>
+                <div class="list__meta">${draft.pharmacyEmail}</div>
+              </div>
+              <span class="list__chevron">${icon("chevronRight", { size: 18 })}</span>
+            </button>
+            <label class="switch-row" style="cursor:pointer">
+              <div>
+                <div class="switch-row__label">Print “Emailed … as original”</div>
+                <div class="switch-row__hint">
+                  Marks the emailed copy as the original of record, so it cannot be filled twice.
+                </div>
+              </div>
+              <input type="checkbox" data-toggle="declareEmailedOriginal"
+                ${draft.declareEmailedOriginal ? "checked" : ""} style="width:22px;height:22px;flex-shrink:0">
+            </label>
+          </div>
+          ${draft.declareEmailedOriginal
+            ? html`<p class="small muted" style="margin-top:8px;padding-inline:4px">
+                The script will read: <b>Emailed to ${draft.pharmacyEmail}${
+                  draft.pharmacyName ? ` (${draft.pharmacyName})` : ""
+                } as original.</b>
+              </p>`
+            : ""}`
+        : html`
+          <button class="btn btn--outline btn--block" data-act="pick-pharmacy">
+            ${icon("receipt", { size: 18 })} Choose pharmacy
+          </button>`}
+    </div>
+
+    <div class="section">
       <label class="field">
         <span class="field__label">Notes to the pharmacist <span class="muted">optional</span></span>
         <textarea class="textarea" data-field="notes" placeholder="e.g. Please dispense generic where available"
@@ -442,6 +511,13 @@ function patientCard(patient) {
   `;
 }
 
+/** Exactly what this line prints, so nothing is a surprise on the page. */
+function printedItem(item) {
+  return [itemLine(item), itemSubLine(item), item.noSubstitute ? NO_SUBSTITUTE_LABEL : ""]
+    .filter(Boolean)
+    .join(" — ");
+}
+
 function itemCard(item, index, count, drugHistory) {
   const hint = doseHint(item, drugHistory);
   return html`
@@ -507,13 +583,24 @@ function itemCard(item, index, count, drugHistory) {
         </div>
       </div>
 
-      <label class="field" style="margin-bottom:0">
+      <label class="field" style="margin-bottom:8px">
         <span class="field__label">Instructions</span>
         <input class="input" data-field="instructions" data-item-id="${item.id}"
           value="${item.instructions || ""}" placeholder="Take with food">
       </label>
 
-      <p class="small muted" style="margin-top:10px" data-preview="${item.id}">${itemLine(item)}</p>
+      <label class="switch-row" style="cursor:pointer;padding:8px 0;border:0">
+        <div>
+          <div class="switch-row__label">Do not substitute</div>
+          <div class="switch-row__hint">
+            Printed beside this medicine. Without it a pharmacist may dispense a generic.
+          </div>
+        </div>
+        <input type="checkbox" data-toggle="noSubstitute" data-item-id="${item.id}"
+          ${item.noSubstitute ? "checked" : ""} style="width:22px;height:22px;flex-shrink:0">
+      </label>
+
+      <p class="small muted" style="margin-top:10px" data-preview="${item.id}">${printedItem(item)}</p>
     </div>
   `;
 }

@@ -12,6 +12,7 @@ import * as store from "./store.js";
 
 const SYNCED_STORES = [
   "patients", "prescriptions", "encounters", "invoices", "certificates", "medicines",
+  "pharmacies",
 ];
 const TABLE = "records";
 

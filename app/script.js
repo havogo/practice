@@ -23,6 +23,27 @@ export function itemSubLine(item) {
   return parts.join("  ·  ");
 }
 
+// Carried on its own line, in bold, rather than among the dosing notes. It is
+// the instruction that stops a pharmacist dispensing a generic, so it has to be
+// impossible to skim past.
+export const NO_SUBSTITUTE_LABEL = "DO NOT SUBSTITUTE";
+export const noSubstitute = (item) => Boolean(item.noSubstitute);
+
+/**
+ * The line confirming an emailed script is the original.
+ *
+ * A pharmacy receiving a script by email cannot tell whether it is the only
+ * copy. Saying on the page where it was sent makes the emailed copy the
+ * original of record, and makes a second dispensing elsewhere obvious.
+ */
+export function emailedDeclaration(prescription) {
+  if (!prescription.declareEmailedOriginal) return "";
+  const to = prescription.pharmacyEmail?.trim();
+  if (!to) return "";
+  const name = prescription.pharmacyName?.trim();
+  return `Emailed to ${to}${name ? ` (${name})` : ""} as original.`;
+}
+
 function patientLabel(patient) {
   const age = ageFrom(patient?.dob);
   return [store.patientName(patient), age != null ? `${age} yrs` : null].filter(Boolean).join(", ");
@@ -92,12 +113,18 @@ export function scriptMarkup({ prescriber, patient, prescription }) {
           <li class="script__item">
             <div class="script__item-line">${itemLine(item)}</div>
             ${itemSubLine(item) ? html`<div class="script__item-sub">${itemSubLine(item)}</div>` : ""}
+            ${noSubstitute(item)
+              ? html`<div class="script__item-nosub">${NO_SUBSTITUTE_LABEL}</div>` : ""}
           </li>
         `
       )}
     </ul>
 
     ${prescription.notes ? html`<div class="script__meta">${prescription.notes}</div>` : ""}
+
+    ${emailedDeclaration(prescription)
+      ? html`<div class="script__declaration">${emailedDeclaration(prescription)}</div>`
+      : ""}
 
     ${signatureBlock(prescriber, prescription.issuedAt)}
     ${letterFooter(prescriber)}
@@ -206,12 +233,19 @@ function layoutScript(ctx, { prescriber, patient, prescription, signature, pageH
     write(itemLine(item), { size: 26, gap: 4 });
     const sub = itemSubLine(item);
     if (sub) write(sub, { size: 20, gap: 2, indent: 40 });
+    if (noSubstitute(item)) write(NO_SUBSTITUTE_LABEL, { size: 21, weight: "700", gap: 2, indent: 40 });
     y += 20;
   }
 
   if (prescription.notes) {
     y += 10;
     write(prescription.notes, { size: 20, style: "italic" });
+  }
+
+  const declaration = emailedDeclaration(prescription);
+  if (declaration) {
+    y += 14;
+    write(declaration, { size: 21, weight: "600" });
   }
 
   const bodyBottom = y;
@@ -402,10 +436,14 @@ export async function scriptToText({ patient, prescription }) {
     "",
     "Rx:",
     ...prescription.items.flatMap((item) => {
+      const lines = [`  ${itemLine(item)}`];
       const sub = itemSubLine(item);
-      return sub ? [`  ${itemLine(item)}`, `      ${sub}`] : [`  ${itemLine(item)}`];
+      if (sub) lines.push(`      ${sub}`);
+      if (noSubstitute(item)) lines.push(`      ${NO_SUBSTITUTE_LABEL}`);
+      return lines;
     }),
     "",
+    emailedDeclaration(prescription) || null,
     formatDate(prescription.issuedAt) || prescription.issuedAt,
     prescriber.name,
   ];

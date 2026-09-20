@@ -10,7 +10,7 @@ import { isoDate } from "./ui.js";
 
 const BACKUP_STORES = [
   "patients", "prescriptions", "encounters", "invoices", "certificates",
-  "medicines", "attachments", "settings",
+  "medicines", "pharmacies", "attachments", "settings",
 ];
 
 const FORMAT = "practice-backup";

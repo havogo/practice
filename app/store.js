@@ -83,6 +83,9 @@ export const encounters = repo("encounters", { sort: byDateDesc });
 export const invoices = repo("invoices", { sort: byDateDesc });
 export const certificates = repo("certificates", { sort: byDateDesc });
 export const medicines = repo("medicines", { sort: (a, b) => a.name.localeCompare(b.name) });
+export const pharmacies = repo("pharmacies", {
+  sort: (a, b) => (b.useCount || 0) - (a.useCount || 0) || a.name.localeCompare(b.name),
+});
 export const attachments = repo("attachments", { sort: byUpdatedDesc });
 
 // ---------------------------------------------------------------------------
@@ -105,6 +108,9 @@ export function newPrescriptionItem(seed = {}) {
     name: "", strength: "", form: "", dose: "", frequency: "",
     duration: "", quantity: "", repeats: 0, instructions: "",
     drugId: null,
+    // A pharmacist may dispense a generic equivalent unless the prescription
+    // says otherwise, so this has to travel per medicine and print on the page.
+    noSubstitute: false,
     ...seed,
   };
 }
@@ -112,9 +118,33 @@ export function newPrescriptionItem(seed = {}) {
 export function newPrescription(seed = {}) {
   return {
     patientId: null, issuedAt: isoDate(), status: "draft",
-    items: [], notes: "", pharmacy: "", diagnosis: "", icd10: "",
+    items: [], notes: "", diagnosis: "", icd10: "",
+    // Where it is going, and whether the page should say so. When a script is
+    // emailed to a pharmacy the emailed copy *is* the original, and the page
+    // has to state that — a pharmacy cannot tell otherwise, and the patient
+    // must not be able to have it filled a second time elsewhere.
+    pharmacyId: null,
+    pharmacyName: "",
+    pharmacyEmail: "",
+    declareEmailedOriginal: false,
     ...seed,
   };
+}
+
+export function newPharmacy(seed = {}) {
+  return { name: "", email: "", phone: "", notes: "", useCount: 0, lastUsedAt: null, ...seed };
+}
+
+/** Pharmacies you actually send to, most used first. */
+export async function recordPharmacyUse(pharmacyId) {
+  if (!pharmacyId) return null;
+  const existing = await pharmacies.get(pharmacyId);
+  if (!existing) return null;
+  return pharmacies.save({
+    ...existing,
+    useCount: (existing.useCount || 0) + 1,
+    lastUsedAt: now(),
+  });
 }
 
 export function newEncounter(seed = {}) {
