@@ -505,6 +505,83 @@ export async function pickPastMedicines({ patientId, alreadyOn = [] }) {
   }).then((result) => result || []);
 }
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+/**
+ * Choose which pharmacy a script is going to.
+ *
+ * The address is kept rather than retyped, because getting a pharmacy's email
+ * wrong on a script that declares itself the original is worse than merely
+ * inconvenient. Resolves to a pharmacy record, or null.
+ */
+export async function pickPharmacy() {
+  const saved = await store.pharmacies.all();
+
+  return sheet({
+    title: "Send to which pharmacy?",
+    body: html`
+      ${saved.length
+        ? html`
+          <div class="card" style="margin-bottom:16px">
+            <ul class="list">
+              ${saved.map((p) => html`
+                <li><button class="list__item" data-ph="${p.id}">
+                  <div class="avatar">${initials(p.name)}</div>
+                  <div class="list__body">
+                    <div class="list__title">${p.name}</div>
+                    <div class="list__meta">${p.email}</div>
+                  </div>
+                  ${p.useCount ? html`<div class="list__trail">${p.useCount}×</div>` : ""}
+                </button></li>
+              `)}
+            </ul>
+          </div>`
+        : ""}
+
+      <form id="ph-form">
+        <div class="section__head" style="margin:0 0 8px">
+          <span class="section__title">${saved.length ? "Or add another" : "Add a pharmacy"}</span>
+        </div>
+        <label class="field">
+          <span class="field__label">Pharmacy name</span>
+          <input class="input" name="name" autocapitalize="words" placeholder="Clicks Blouberg" required>
+        </label>
+        <label class="field">
+          <span class="field__label">Email</span>
+          <input class="input" name="email" type="email" inputmode="email" autocapitalize="none"
+            autocorrect="off" spellcheck="false" placeholder="scripts@pharmacy.co.za" required>
+        </label>
+        <p class="field__error hidden" id="ph-error"></p>
+        <button class="btn btn--primary btn--block" type="submit">Save and use</button>
+      </form>
+    `,
+    onMount(root, close) {
+      root.addEventListener("click", (event) => {
+        const el = event.target.closest("[data-ph]");
+        if (el) close(saved.find((p) => p.id === el.dataset.ph) || null);
+      });
+
+      const form = root.querySelector("#ph-form");
+      const error = root.querySelector("#ph-error");
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const data = readForm(form);
+        if (!data.name || !EMAIL_RE.test(data.email)) {
+          error.textContent = !data.name
+            ? "Give the pharmacy a name."
+            : "That does not look like an email address.";
+          error.classList.remove("hidden");
+          return;
+        }
+        close(await store.pharmacies.save(store.newPharmacy({
+          name: data.name,
+          email: data.email.toLowerCase(),
+        })));
+      });
+    },
+  });
+}
+
 /** `action` is { label, nav } to navigate, or { label, act } to be handled locally. */
 export function emptyState({ iconName = "note", title, text, action = null }) {
   return html`

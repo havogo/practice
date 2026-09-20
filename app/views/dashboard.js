@@ -6,12 +6,13 @@ import * as store from "../store.js";
 import { emptyState } from "../components.js";
 
 export async function view() {
-  const [prescriptions, patients, encounters, prescriber, activity] = await Promise.all([
+  const [prescriptions, patients, encounters, prescriber, activity, backupState] = await Promise.all([
     store.prescriptions.all(),
     store.patients.all(),
     store.encounters.all(),
     store.getPrescriber(),
     store.patientActivity(),
+    import("../backup.js").then((m) => m.backupStatus()),
   ]);
 
   const today = isoDate();
@@ -43,6 +44,8 @@ export async function view() {
       ? firstRunContent()
       : html`
         <p class="view__subtitle">${formatDate(today, { weekday: "long" })}</p>
+
+        ${backupWarning(backupState)}
 
         <div class="btn-row btn-row--split" style="margin-bottom:8px">
           <button class="btn btn--primary" data-nav="/prescribe">${icon("script")} New script</button>
@@ -118,6 +121,44 @@ export async function view() {
       });
     },
   };
+}
+
+/**
+ * Says out loud how much would be lost right now.
+ *
+ * Everything in this app lives in one browser database on one device. Deleting
+ * the Home Screen icon, or iOS reclaiming space, takes all of it — and nothing
+ * inside the app can prevent that. A copy somewhere else is the only real
+ * protection, so the app states plainly when there isn't one.
+ */
+function backupWarning(state) {
+  if (!state || !state.records) return "";
+
+  if (state.never) {
+    return html`
+      <button class="alert alert--danger" data-nav="/settings"
+        style="width:100%;text-align:left;border:0;cursor:pointer">
+        ${icon("warning")}
+        <div>
+          <b>${plural(state.records, "record")} on this device, never backed up.</b><br>
+          If this phone is lost, or the app is removed from the Home Screen, they go with it.
+          Export a backup now — it takes ten seconds.
+        </div>
+      </button>
+    `;
+  }
+  if (state.atRisk) {
+    return html`
+      <button class="alert alert--warn" data-nav="/settings"
+        style="width:100%;text-align:left;border:0;cursor:pointer">
+        ${icon("warning")}
+        <div>
+          Last backup was ${state.days} days ago. ${plural(state.records, "record")} on this device.
+        </div>
+      </button>
+    `;
+  }
+  return "";
 }
 
 /**

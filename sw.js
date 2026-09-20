@@ -7,7 +7,7 @@
 // Patient data never passes through here — it lives in IndexedDB.
 
 // Bump VERSION on every release that touches app/, styles/ or data/.
-const VERSION = "v6";
+const VERSION = "v9";
 const CACHE = `practice-${VERSION}`;
 
 // The PDF reader and text recogniser under vendor/ come to about 14 MB. They
@@ -47,12 +47,26 @@ const SHELL = [
   "./app/views/certificate.js",
   "./app/certificate.js",
   "./app/docactions.js",
+  "./app/signature.js",
   "./app/pdf.js",
   "./app/extract.js",
   "./app/rx-parse.js",
   "./icons/icon.svg",
 ];
 
+// A running page must never be switched to a different version underneath
+// itself.
+//
+// The app loads its screens as separate modules on demand. If a new worker
+// takes over a page that is already running the previous version — which
+// skipWaiting() plus clients.claim() does — then tapping through to a screen
+// that has not been loaded yet fetches the *new* copy into the *old* page, and
+// deleting the previous cache during that takeover removes the matching copy
+// entirely. The result is a half-updated app that worked a moment ago.
+//
+// So the new worker waits. It installs in the background and takes over the
+// next time the app is opened from a fully closed state, by which point nothing
+// is running the old version and the old cache is safe to discard.
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(CACHE).then(async (cache) => {
@@ -61,7 +75,6 @@ self.addEventListener("install", (event) => {
       await Promise.all(
         SHELL.map((url) => cache.add(url).catch((err) => console.warn("[sw] skip", url, err)))
       );
-      await self.skipWaiting();
     })
   );
 });
@@ -69,6 +82,8 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
+      // Safe now: activation only happens once no page is running the old
+      // version, so no client can still need the cache being removed.
       const names = await caches.keys();
       await Promise.all(names.filter((n) => n !== CACHE).map((n) => caches.delete(n)));
       await self.clients.claim();

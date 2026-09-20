@@ -8,7 +8,9 @@
 const DB_NAME = "practice";
 // v2 added the certificates store. Upgrades are additive, so an older install
 // gains the new store without touching the records already on the device.
-const DB_VERSION = 2;
+// v3 added the pharmacies store. Upgrades are additive, so an older install
+// gains it without touching records already on the device.
+const DB_VERSION = 3;
 
 /** Every store carries the same envelope so sync and backup stay generic. */
 export const STORES = {
@@ -18,6 +20,7 @@ export const STORES = {
   invoices: { keyPath: "id", indexes: [["updatedAt", "updatedAt"], ["patientId", "patientId"], ["number", "number"]] },
   certificates: { keyPath: "id", indexes: [["updatedAt", "updatedAt"], ["patientId", "patientId"], ["date", "date"]] },
   medicines: { keyPath: "id", indexes: [["updatedAt", "updatedAt"], ["name", "name"]] },
+  pharmacies: { keyPath: "id", indexes: [["updatedAt", "updatedAt"], ["name", "name"]] },
   attachments: { keyPath: "id", indexes: [["updatedAt", "updatedAt"], ["patientId", "patientId"]] },
   settings: { keyPath: "key", indexes: [] },
   outbox: { keyPath: "seq", autoIncrement: true, indexes: [] },

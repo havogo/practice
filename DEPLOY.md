@@ -290,6 +290,18 @@ did not finish. Run it again; running it twice is harmless.
 
 # Part 6 — Backups
 
+> ## ⚠️ Read this before you delete the app icon
+>
+> Removing Practice from the Home Screen **deletes its database along with the
+> icon**. Every patient, script, note and certificate goes with it, and there is
+> no undo — not from inside the app, and not by reinstalling.
+>
+> The same is true of iPhone Settings → Safari → Clear History and Website Data.
+>
+> **Always export a backup first.** Anyone telling you to remove and re-add the
+> app to fix a problem — including me — is telling you to destroy your records
+> unless you back up first.
+
 Do this once a month, and before you ever change phones. It takes ten seconds.
 
 1. **Settings** → **Export a backup**.
@@ -339,7 +351,8 @@ Check your address ends with a **slash**: `…github.io/practice/` not
 You are in Chrome, not Safari. Only Safari can do this on iPhone.
 
 **The app icon is there but it opens in Safari with an address bar.**
-You added a bookmark instead. Delete the icon (press and hold → Remove) and do
+You added a bookmark instead. **Export a backup first** — see the warning below
+— then delete the icon (press and hold → Remove) and do
 Part 3 again, making sure you tap *Add to Home Screen*.
 
 **Importing a photo of a script spins forever the first time.**

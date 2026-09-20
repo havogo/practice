@@ -22,6 +22,8 @@ export async function view(ctx) {
     store.patients.all(), store.prescriptions.all(), store.encounters.all(), store.invoices.all(),
   ]).then(([a, b, c, d]) => ({ patients: a.length, prescriptions: b.length, notes: c.length, invoices: d.length }));
 
+  const backupState = await backup.backupStatus();
+
   const installed = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
 
   return {
@@ -81,8 +83,17 @@ export async function view(ctx) {
           </button>
           <input type="file" id="restore-file" accept="application/json,.json" class="hidden">
         </div>
-        <p class="small muted" style="margin-top:8px">
-          Export writes one JSON file with everything. Save it to iCloud Drive and it survives a lost phone.
+        <p class="small ${backupState.never && backupState.records ? "" : "muted"}"
+          style="margin-top:8px;${backupState.never && backupState.records ? "color:var(--danger-500);font-weight:550" : ""}">
+          ${backupState.never
+            ? backupState.records
+              ? "Never backed up. Everything is on this device only."
+              : "Export writes one JSON file with everything."
+            : `Last backed up ${backupState.days === 0 ? "today" : plural(backupState.days, "day")} ago.`}
+        </p>
+        <p class="small muted" style="margin-top:4px">
+          Save it to iCloud Drive and it survives a lost phone, a cleared cache, or the app being
+          removed from the Home Screen — which deletes the database along with the icon.
         </p>
       </div>
 
@@ -335,13 +346,23 @@ function editPrescriber(prescriber) {
         </div>
 
         <div class="field">
-          <span class="field__label">Signature image <span class="muted">optional</span></span>
-          ${prescriber.signatureImage
-            ? html`<img src="${prescriber.signatureImage}" alt="Current signature"
-                style="max-height:60px;margin-bottom:8px;background:#fff;border-radius:6px;padding:4px">`
-            : ""}
-          <input class="input" type="file" name="signature" accept="image/*">
-          <span class="field__hint">A photo of your signature on white paper prints onto the script.</span>
+          <span class="field__label">Signature <span class="muted">optional</span></span>
+          <div id="sig-preview">
+            ${prescriber.signatureImage
+              ? html`<img src="${prescriber.signatureImage}" alt="Your current signature"
+                  style="max-height:70px;margin-bottom:8px;background:#fff;border:1px solid var(--line);
+                         border-radius:6px;padding:6px;display:block">`
+              : html`<p class="small muted" style="margin-bottom:8px">No signature yet.</p>`}
+          </div>
+          <button class="btn btn--secondary btn--block" type="button" data-sign>
+            ${icon("edit", { size: 18 })}
+            ${prescriber.signatureImage ? "Sign again" : "Sign on this device"}
+          </button>
+          <details style="margin-top:8px">
+            <summary class="small muted" style="cursor:pointer">Or upload a photo of your signature</summary>
+            <input class="input" type="file" name="signature" accept="image/*" style="margin-top:8px">
+            <span class="field__hint">Signed on plain white paper, photographed straight on.</span>
+          </details>
         </div>
 
         <button class="btn btn--primary btn--block" type="submit">Save</button>
@@ -356,8 +377,27 @@ function editPrescriber(prescriber) {
       const form = root.querySelector("#pr");
       let signature = prescriber.signatureImage || "";
 
+      const preview = root.querySelector("#sig-preview");
+      const showSignature = () => {
+        mount(preview, signature
+          ? html`<img src="${signature}" alt="Your current signature"
+              style="max-height:70px;margin-bottom:8px;background:#fff;border:1px solid var(--line);
+                     border-radius:6px;padding:6px;display:block">`
+          : html`<p class="small muted" style="margin-bottom:8px">No signature yet.</p>`);
+      };
+
+      root.querySelector("[data-sign]")?.addEventListener("click", async () => {
+        const { captureSignature } = await import("../signature.js");
+        const drawn = await captureSignature();
+        if (!drawn) return;
+        signature = drawn;
+        showSignature();
+        toast("Signature captured — remember to save", "ok");
+      });
+
       root.querySelector("[data-clear-sig]")?.addEventListener("click", () => {
         signature = "";
+        showSignature();
         toast("Signature will be removed when you save");
       });
 
